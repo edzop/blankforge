@@ -1,0 +1,121 @@
+{
+  "meta": {
+    "name": "Midlength Egg",
+    "template": "midlength",
+    "version": "1.0",
+    "created": "2026-04-17T23:35:54.573346+00:00",
+    "units": "mm"
+  },
+  "parameters": {
+    "length_mm": 2286.0,
+    "width_mm": 540.0,
+    "thickness_mm": 65.0,
+    "rocker_mm": 35.0
+  },
+  "tail": {
+    "shape": "roundtail",
+    "width_mm": 350.0,
+    "length_mm": 160.0,
+    "thickness_mm": 48.0
+  },
+  "curves": {
+    "width": {
+      "points": [
+        {
+          "position_mm": 0.0,
+          "value_mm": 185.0
+        },
+        {
+          "position_mm": 1005.84,
+          "value_mm": 270.0
+        },
+        {
+          "position_mm": 1828.8000000000002,
+          "value_mm": 262.5
+        },
+        {
+          "position_mm": 2286.0,
+          "value_mm": 175.0
+        }
+      ]
+    },
+    "rocker": {
+      "points": [
+        {
+          "position_mm": 0.0,
+          "value_mm": 38.0
+        },
+        {
+          "position_mm": 685.8,
+          "value_mm": 10.5
+        },
+        {
+          "position_mm": 1600.1999999999998,
+          "value_mm": 7.0
+        },
+        {
+          "position_mm": 2286.0,
+          "value_mm": 14.0
+        }
+      ]
+    },
+    "thickness": {
+      "points": [
+        {
+          "position_mm": 0.0,
+          "value_mm": 20.0
+        },
+        {
+          "position_mm": 800.0999999999999,
+          "value_mm": 32.5
+        },
+        {
+          "position_mm": 1600.1999999999998,
+          "value_mm": 29.25
+        },
+        {
+          "position_mm": 2286.0,
+          "value_mm": 19.0
+        }
+      ]
+    },
+    "rail": [
+      {
+        "position_mm": 0.0,
+        "profile": {
+          "apex_ratio": 0.55,
+          "upper_concave": 0.1,
+          "lower_rail_angle": 55.0,
+          "softness": 0.7
+        }
+      },
+      {
+        "position_mm": 685.8,
+        "profile": {
+          "apex_ratio": 0.5,
+          "upper_concave": 0.0,
+          "lower_rail_angle": 45.0,
+          "softness": 0.6
+        }
+      },
+      {
+        "position_mm": 1371.6,
+        "profile": {
+          "apex_ratio": 0.45,
+          "upper_concave": -0.1,
+          "lower_rail_angle": 40.0,
+          "softness": 0.4
+        }
+      },
+      {
+        "position_mm": 2286.0,
+        "profile": {
+          "apex_ratio": 0.4,
+          "upper_concave": -0.2,
+          "lower_rail_angle": 35.0,
+          "softness": 0.2
+        }
+      }
+    ]
+  }
+}
