@@ -271,7 +271,8 @@ class GLViewport(QOpenGLWidget):
                 math.cos(el),
             ], dtype=np.float32)
             pan_scale = self._camera.distance * 0.001
-            self._camera.target += right * dx * pan_scale - up * dy * pan_scale
+            # Grab-and-drag convention: mouse down → scene moves down with the cursor
+            self._camera.target += right * dx * pan_scale + up * dy * pan_scale
         self._refresh()
 
     def wheelEvent(self, event) -> None:

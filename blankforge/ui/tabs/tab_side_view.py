@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from blankforge.data.model import BoardModel, ControlPoint, RailStation
-from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator
+from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator, resolve_thickness_curve
 from blankforge.ui.widgets.value_sliders import LabeledSlider
 
 HIT_RADIUS_PX = 8
@@ -420,7 +420,10 @@ class SideViewTab(QWidget):
             thick_cp = thick_by_pos.get(pt.position_mm)
             if thick_cp is None:
                 # Fallback: evaluate via interpolation (fixed mode)
-                thick_eval = BoardCurveEvaluator(self._model.curves.thickness)
+                thick_eval = BoardCurveEvaluator(
+                    resolve_thickness_curve(self._model.curves.thickness,
+                                            self._model.parameters.thickness_mm)
+                )
                 half_t = float(thick_eval(pt.position_mm))
                 mode = "fixed"
             else:

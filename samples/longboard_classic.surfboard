@@ -1,41 +1,54 @@
 {
   "meta": {
-    "name": "Longboard Classic",
-    "template": "longboard",
+    "name": "New Shortboard",
+    "template": "shortboard",
     "version": "1.0",
-    "created": "2026-04-17T23:35:54.571963+00:00",
+    "created": "2026-04-18T07:58:06.605966+00:00",
     "units": "mm"
   },
   "parameters": {
-    "length_mm": 2743.0,
-    "width_mm": 560.0,
-    "thickness_mm": 70.0,
-    "rocker_mm": 25.0
-  },
-  "tail": {
-    "shape": "roundtail",
-    "width_mm": 380.0,
-    "length_mm": 180.0,
-    "thickness_mm": 55.0
+    "length_mm": 2805.0,
+    "width_mm": 570.0,
+    "thickness_mm": 60.0,
+    "rocker_mm": 50.0
   },
   "curves": {
     "width": {
       "points": [
         {
           "position_mm": 0.0,
-          "value_mm": 210.0
+          "value_mm": 0.0,
+          "mode": "fixed"
         },
         {
-          "position_mm": 1234.3500000000001,
-          "value_mm": 280.0
+          "position_mm": 18.021542612978465,
+          "value_mm": 62.81377525404628,
+          "mode": "fixed"
         },
         {
-          "position_mm": 2194.4,
-          "value_mm": 285.0
+          "position_mm": 98.09365307517737,
+          "value_mm": 124.71665796838478,
+          "mode": "fixed"
         },
         {
-          "position_mm": 2743.0,
-          "value_mm": 190.0
+          "position_mm": 637.7309782608695,
+          "value_mm": 259.1576086956522,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 1396.8900000000028,
+          "value_mm": 285.00000000000057,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 2778.889321402375,
+          "value_mm": 98.10959788017033,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 2804.9999999999977,
+          "value_mm": 40.88578043354549,
+          "mode": "fixed"
         }
       ]
     },
@@ -43,19 +56,23 @@
       "points": [
         {
           "position_mm": 0.0,
-          "value_mm": 30.0
+          "value_mm": 140.93150684931507,
+          "mode": "fixed"
         },
         {
-          "position_mm": 822.9,
-          "value_mm": 7.5
+          "position_mm": 1211.7599999999982,
+          "value_mm": -19.849999999999998,
+          "mode": "fixed"
         },
         {
-          "position_mm": 1920.1,
-          "value_mm": 5.0
+          "position_mm": 2434.74,
+          "value_mm": 6.350000000000001,
+          "mode": "fixed"
         },
         {
-          "position_mm": 2743.0,
-          "value_mm": 10.0
+          "position_mm": 2804.9999999999977,
+          "value_mm": 28.540709969788523,
+          "mode": "fixed"
         }
       ]
     },
@@ -63,19 +80,23 @@
       "points": [
         {
           "position_mm": 0.0,
-          "value_mm": 22.5
+          "value_mm": 5.0,
+          "mode": "fixed"
         },
         {
-          "position_mm": 960.05,
-          "value_mm": 35.0
+          "position_mm": 1211.7599999999982,
+          "value_mm": 50.15,
+          "mode": "fixed"
         },
         {
-          "position_mm": 1920.1,
-          "value_mm": 31.5
+          "position_mm": 2434.74,
+          "value_mm": 24.85,
+          "mode": "fixed"
         },
         {
-          "position_mm": 2743.0,
-          "value_mm": 20.0
+          "position_mm": 2804.9999999999977,
+          "value_mm": 12.5,
+          "mode": "fixed"
         }
       ]
     },
@@ -83,37 +104,41 @@
       {
         "position_mm": 0.0,
         "profile": {
-          "apex_ratio": 0.55,
-          "upper_concave": 0.1,
-          "lower_rail_angle": 55.0,
-          "softness": 0.7
+          "apex_ratio": 0.98,
+          "deck_concave": 0.1,
+          "lower_concave": 0.0,
+          "rail_ratio": 1.0,
+          "softness": 0.42
         }
       },
       {
-        "position_mm": 822.9,
+        "position_mm": 1211.7599999999982,
         "profile": {
-          "apex_ratio": 0.5,
-          "upper_concave": 0.0,
-          "lower_rail_angle": 45.0,
-          "softness": 0.6
+          "apex_ratio": 0.26034230293810023,
+          "deck_concave": 0.8096624512693734,
+          "lower_concave": -0.699667205476847,
+          "rail_ratio": 1.0,
+          "softness": 0.9997242559665305
         }
       },
       {
-        "position_mm": 1645.8,
+        "position_mm": 2434.74,
         "profile": {
-          "apex_ratio": 0.45,
-          "upper_concave": -0.1,
-          "lower_rail_angle": 40.0,
-          "softness": 0.4
+          "apex_ratio": 0.5599999999999996,
+          "deck_concave": 0.08000000000000096,
+          "lower_concave": -0.09000000000000086,
+          "rail_ratio": 0.8500000000000002,
+          "softness": 0.7200000000000004
         }
       },
       {
-        "position_mm": 2743.0,
+        "position_mm": 2804.9999999999977,
         "profile": {
-          "apex_ratio": 0.4,
-          "upper_concave": -0.2,
-          "lower_rail_angle": 35.0,
-          "softness": 0.2
+          "apex_ratio": 0.58,
+          "deck_concave": -0.14,
+          "lower_concave": 0.1,
+          "rail_ratio": 0.81,
+          "softness": 0.32
         }
       }
     ]

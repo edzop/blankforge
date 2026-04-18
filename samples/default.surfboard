@@ -7,8 +7,8 @@
     "units": "mm"
   },
   "parameters": {
-    "length_mm": 1880.0,
-    "width_mm": 390.0,
+    "length_mm": 2134.0,
+    "width_mm": 583.0,
     "thickness_mm": 60.0,
     "rocker_mm": 50.0
   },
@@ -17,18 +17,21 @@
       "points": [
         {
           "position_mm": 0.0,
-          "value_mm": 6.871270247229317,
-          "mode": "fixed"
+          "value_mm": 10.271668087524844,
+          "mode": "fixed",
+          "influence": 1.0
         },
         {
-          "position_mm": 936.24,
-          "value_mm": 195.00000000000009,
-          "mode": "fixed"
+          "position_mm": 1062.7320000000007,
+          "value_mm": 291.5000000000003,
+          "mode": "fixed",
+          "influence": 1.0
         },
         {
-          "position_mm": 1880.0,
-          "value_mm": 27.974481349267958,
-          "mode": "fixed"
+          "position_mm": 2133.9999999999995,
+          "value_mm": 41.818263145187686,
+          "mode": "fixed",
+          "influence": 1.0
         }
       ]
     },
@@ -37,17 +40,26 @@
         {
           "position_mm": 0.0,
           "value_mm": 140.93150684931507,
-          "mode": "fixed"
+          "mode": "fixed",
+          "influence": 1.0
         },
         {
-          "position_mm": 812.5463013698629,
-          "value_mm": -19.855479452054794,
-          "mode": "fixed"
+          "position_mm": 921.8879999999988,
+          "value_mm": -19.849999999999998,
+          "mode": "fixed",
+          "influence": 1.0
         },
         {
-          "position_mm": 1880.0,
+          "position_mm": 1852.3120000000015,
+          "value_mm": 6.350000000000001,
+          "mode": "fixed",
+          "influence": 1.0
+        },
+        {
+          "position_mm": 2133.9999999999995,
           "value_mm": 29.6,
-          "mode": "fixed"
+          "mode": "fixed",
+          "influence": 1.0
         }
       ]
     },
@@ -56,17 +68,26 @@
         {
           "position_mm": 0.0,
           "value_mm": 5.0,
-          "mode": "fixed"
+          "mode": "fixed",
+          "influence": 1.0
         },
         {
-          "position_mm": 812.5463013698629,
-          "value_mm": 25.65,
-          "mode": "fixed"
+          "position_mm": 921.8879999999988,
+          "value_mm": 50.15,
+          "mode": "fixed",
+          "influence": 1.0
         },
         {
-          "position_mm": 1880.0,
+          "position_mm": 1852.3120000000015,
+          "value_mm": 1.0,
+          "mode": "ratio",
+          "influence": 1.0
+        },
+        {
+          "position_mm": 2133.9999999999995,
           "value_mm": 12.5,
-          "mode": "fixed"
+          "mode": "fixed",
+          "influence": 1.0
         }
       ]
     },
@@ -82,17 +103,27 @@
         }
       },
       {
-        "position_mm": 812.5463013698629,
+        "position_mm": 921.8879999999988,
         "profile": {
-          "apex_ratio": 0.9275389138106398,
-          "deck_concave": 0.3230614786197732,
-          "lower_concave": -0.4012491266698046,
-          "rail_ratio": 0.9669416833807888,
-          "softness": 0.4068847284526601
+          "apex_ratio": 0.26034230293810023,
+          "deck_concave": 0.8096624512693734,
+          "lower_concave": -0.699667205476847,
+          "rail_ratio": 1.0,
+          "softness": 0.9997242559665305
         }
       },
       {
-        "position_mm": 1880.0,
+        "position_mm": 1852.3120000000015,
+        "profile": {
+          "apex_ratio": 0.5056068903954256,
+          "deck_concave": 0.08085454413858006,
+          "lower_concave": -0.08598277401143584,
+          "rail_ratio": 0.8541709088277161,
+          "softness": 0.4780853579097205
+        }
+      },
+      {
+        "position_mm": 2133.9999999999995,
         "profile": {
           "apex_ratio": 0.58,
           "deck_concave": -0.14,

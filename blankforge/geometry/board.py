@@ -4,8 +4,8 @@ from typing import NamedTuple
 
 import numpy as np
 
-from blankforge.data.model import BoardModel, ControlPoint, CurveData
-from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator
+from blankforge.data.model import BoardModel
+from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator, resolve_thickness_curve
 
 
 class BoardMesh(NamedTuple):
@@ -34,27 +34,18 @@ def _occt_available() -> bool:
         return False
 
 
-def _build_with_numpy(model: BoardModel, resolution: int) -> tuple[BoardMesh, BoardStats]:
+def _build_with_numpy(model: BoardModel, resolution: int, n_contour: int = 32) -> tuple[BoardMesh, BoardStats]:
     L = model.parameters.length_mm
     stations = np.linspace(0, L, resolution)
 
     width_eval = BoardCurveEvaluator(model.curves.width)
     rocker_eval = BoardCurveEvaluator(model.curves.rocker)
 
-    # Resolve ratio-mode thickness points: value_mm stores a ratio; multiply by param
-    param_half_t = model.parameters.thickness_mm / 2.0
-    resolved_thick = CurveData(points=[
-        ControlPoint(
-            position_mm=cp.position_mm,
-            value_mm=cp.value_mm * param_half_t if cp.mode == "ratio" else cp.value_mm,
-        )
-        for cp in model.curves.thickness.sorted_points()
-    ])
-    thick_eval = BoardCurveEvaluator(resolved_thick)
+    # Resolve ratio-mode thickness points to mm before evaluating
+    thick_eval = BoardCurveEvaluator(
+        resolve_thickness_curve(model.curves.thickness, model.parameters.thickness_mm)
+    )
     rail_eval = RailProfileEvaluator(model.curves.rail)
-
-    # n_contour: number of points around each cross-section (even, for symmetry)
-    n_contour = 32  # per side → 64 total (left + right)
 
     all_verts: list[np.ndarray] = []
     all_rings: list[np.ndarray] = []  # indices into all_verts for each ring
@@ -178,13 +169,14 @@ class BoardGeometryBuilder:
     def __init__(self, use_occt: bool = True) -> None:
         self._use_occt = use_occt and _occt_available()
 
-    def build(self, model: BoardModel, resolution: int = 50) -> tuple[BoardMesh, BoardStats]:
+    def build(self, model: BoardModel, resolution: int = 50,
+              n_contour: int = 32) -> tuple[BoardMesh, BoardStats]:
         if self._use_occt:
             try:
                 return _build_with_occt(model, resolution)
             except Exception:
                 pass
-        return _build_with_numpy(model, resolution)
+        return _build_with_numpy(model, resolution, n_contour)
 
 
 def _build_with_occt(model: BoardModel, resolution: int) -> tuple[BoardMesh, BoardStats]:

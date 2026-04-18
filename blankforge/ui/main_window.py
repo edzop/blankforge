@@ -29,16 +29,19 @@ class _WorkerSignals(QObject):
 
 
 class _GeometryWorker(QRunnable):
-    def __init__(self, model: BoardModel, builder: BoardGeometryBuilder, signals: _WorkerSignals) -> None:
+    def __init__(self, model: BoardModel, builder: BoardGeometryBuilder,
+                 signals: _WorkerSignals, resolution: int = 50, n_contour: int = 32) -> None:
         super().__init__()
         self.signals = signals
         self._model = model.model_copy(deep=True)
         self._builder = builder
+        self._resolution = resolution
+        self._n_contour = n_contour
 
     @Slot()
     def run(self) -> None:
         try:
-            mesh, stats = self._builder.build(self._model)
+            mesh, stats = self._builder.build(self._model, self._resolution, self._n_contour)
             self.signals.finished.emit(mesh, stats)
         except RuntimeError:
             pass  # Window may have closed before thread finished
@@ -78,6 +81,8 @@ class BlankForgeWindow(QMainWindow):
         self._builder = BoardGeometryBuilder(use_occt=False)
         self._build_pending = False
         self._active_workers: list[_GeometryWorker] = []
+        self._mesh_resolution = 50  # stations along length
+        self._mesh_contour = 32     # points per cross-section side
 
         self._build_ui()
         self._build_menu()
@@ -136,6 +141,7 @@ class BlankForgeWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.model_changed.connect(self._on_model_changed)
+        self._tab_rendered.mesh_quality_changed.connect(self.set_mesh_quality)
 
     def _on_model_changed(self) -> None:
         self._tab_parameters.refresh_from_model()
@@ -151,9 +157,16 @@ class BlankForgeWindow(QMainWindow):
         signals = _WorkerSignals(self)
         signals.finished.connect(self._on_geometry_ready)
         signals.error.connect(self._on_geometry_error)
-        worker = _GeometryWorker(self.model, self._builder, signals)
+        worker = _GeometryWorker(self.model, self._builder, signals,
+                                 resolution=self._mesh_resolution,
+                                 n_contour=self._mesh_contour)
         self._active_workers.append(worker)
         QThreadPool.globalInstance().start(worker)
+
+    def set_mesh_quality(self, resolution: int, n_contour: int) -> None:
+        self._mesh_resolution = resolution
+        self._mesh_contour = n_contour
+        self._trigger_geometry_build()
 
     def _on_geometry_ready(self, mesh: BoardMesh, stats: BoardStats) -> None:
         self._tab_rendered.update_mesh(mesh)

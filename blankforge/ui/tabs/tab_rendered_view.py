@@ -24,10 +24,14 @@ def _build_wireframe_lines(
     show_lat: bool,
     show_cross: bool = False,
 ) -> np.ndarray:
-    from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator
+    from blankforge.geometry.curves import (
+        BoardCurveEvaluator, RailProfileEvaluator, resolve_thickness_curve,
+    )
     L = model.parameters.length_mm
     width_eval = BoardCurveEvaluator(model.curves.width)
-    thick_eval = BoardCurveEvaluator(model.curves.thickness)
+    thick_eval = BoardCurveEvaluator(
+        resolve_thickness_curve(model.curves.thickness, model.parameters.thickness_mm)
+    )
     rocker_eval = BoardCurveEvaluator(model.curves.rocker)
     rail_eval = RailProfileEvaluator(model.curves.rail)
 
@@ -92,6 +96,8 @@ _VIEW_PRESETS = [
 
 
 class RenderedViewTab(QWidget):
+    mesh_quality_changed = Signal(int, int)  # (resolution, n_contour)
+
     def __init__(self, model: BoardModel, model_changed: Signal,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -198,6 +204,24 @@ class RenderedViewTab(QWidget):
         vbox.setContentsMargins(10, 10, 10, 10)
         vbox.setSpacing(8)
         vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Mesh quality — smooths out shaded-mode curves by increasing tessellation
+        vbox.addWidget(QLabel("<b>Mesh Quality</b>"))
+        mq_row = QHBoxLayout()
+        mq_row.addWidget(QLabel("Resolution:"))
+        self._mesh_quality = QSlider(Qt.Orientation.Horizontal)
+        self._mesh_quality.setMinimum(20)
+        self._mesh_quality.setMaximum(200)
+        self._mesh_quality.setValue(50)
+        mq_row.addWidget(self._mesh_quality, stretch=1)
+        self._mesh_quality_label = QLabel("50")
+        self._mesh_quality_label.setFixedWidth(32)
+        mq_row.addWidget(self._mesh_quality_label)
+        vbox.addLayout(mq_row)
+        self._mesh_quality.sliderReleased.connect(self._on_mesh_quality_changed)
+        self._mesh_quality.valueChanged.connect(
+            lambda v: self._mesh_quality_label.setText(str(v))
+        )
 
         # Shading
         vbox.addWidget(QLabel("<b>Shading</b>"))
@@ -313,6 +337,12 @@ class RenderedViewTab(QWidget):
         self._wf_density_label.setText(str(val))
         if self._shade_combo.currentIndex() == 1:
             self._rebuild_wireframe_lines()
+
+    def _on_mesh_quality_changed(self) -> None:
+        # Scale both station count (length axis) and cross-section points together
+        resolution = self._mesh_quality.value()
+        n_contour = max(16, int(resolution * 0.64))  # preserve rough aspect of defaults (50→32)
+        self.mesh_quality_changed.emit(resolution, n_contour)
 
     def _rebuild_wireframe_lines(self) -> None:
         density = self._wf_density.value()

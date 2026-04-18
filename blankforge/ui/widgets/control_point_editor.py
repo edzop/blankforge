@@ -11,7 +11,7 @@ from blankforge.ui.widgets.value_sliders import LabeledSlider
 
 
 class ControlPointSliderPanel(QWidget):
-    value_changed = Signal(float, float)  # always emits (pos_mm, val_mm) in model units
+    value_changed = Signal(float, float, float)  # (pos_mm, val_mm, influence)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -23,12 +23,15 @@ class ControlPointSliderPanel(QWidget):
         # Ratio sliders cap at 1.0 — to go higher, raise the global parameter
         self._pos_slider = LabeledSlider("Position", 0.0, 1.0, decimals=3)
         self._val_slider = LabeledSlider("Value", 0.0, 1.0, decimals=3)
+        self._infl_slider = LabeledSlider("Influence", 0.0, 1.0, decimals=2)
         layout.addWidget(self._pos_slider)
         layout.addWidget(self._val_slider)
+        layout.addWidget(self._infl_slider)
 
         self._blocked = False
         self._pos_slider.value_changed.connect(self._emit)
         self._val_slider.value_changed.connect(self._emit)
+        self._infl_slider.value_changed.connect(self._emit)
         self.setEnabled(False)
 
     def set_scales(self, pos_scale: float, val_scale: float) -> None:
@@ -40,12 +43,14 @@ class ControlPointSliderPanel(QWidget):
             self.value_changed.emit(
                 self._pos_slider.value() * self._pos_scale,
                 self._val_slider.value() * self._val_scale,
+                self._infl_slider.value(),
             )
 
     def set_point(self, pt: ControlPoint, board_length: float, max_value: float) -> None:
         self._blocked = True
         self._pos_slider.set_value(pt.position_mm / self._pos_scale)
         self._val_slider.set_value(pt.value_mm / self._val_scale)
+        self._infl_slider.set_value(getattr(pt, "influence", 1.0))
         self._blocked = False
         self.setEnabled(True)
 
@@ -167,7 +172,7 @@ class ControlPointEditor(QWidget):
             self._select_first_point()
             self.curve_changed.emit()
 
-    def _on_slider_changed(self, pos_mm: float, val_mm: float) -> None:
+    def _on_slider_changed(self, pos_mm: float, val_mm: float, influence: float) -> None:
         idx = self._idx_by_pos(self._curve.sorted_points())
         if idx is None:
             return
@@ -175,6 +180,7 @@ class ControlPointEditor(QWidget):
         if 0 <= idx < len(pts):
             pts[idx].position_mm = pos_mm
             pts[idx].value_mm = val_mm
+            pts[idx].influence = influence
             self._curve.points = pts
             self._selected_pos_mm = pos_mm
             self._viewport.update()

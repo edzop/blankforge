@@ -17,6 +17,7 @@ class LabeledSlider(QWidget):
         imperial_factor: float | None = None,
         imperial_suffix: str = "in",
         imperial_decimals: int = 2,
+        show_ft_in: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -61,8 +62,25 @@ class LabeledSlider(QWidget):
         else:
             self._imperial_spin = None
 
+        # Read-only feet+inches display (only useful for length-style values)
+        if show_ft_in and imperial_factor is not None:
+            self._ft_in_label = QLabel("")
+            self._ft_in_label.setMinimumWidth(72)
+            self._ft_in_label.setStyleSheet("color: #aaa;")
+            layout.addWidget(self._ft_in_label)
+        else:
+            self._ft_in_label = None
+
         self._slider.valueChanged.connect(self._on_slider_changed)
         self._spinbox.valueChanged.connect(self._on_spin_changed)
+
+    def _update_ft_in(self, val: float) -> None:
+        if self._ft_in_label is None:
+            return
+        total_in = val * self._imperial_factor
+        ft = int(total_in // 12)
+        inches = total_in - ft * 12
+        self._ft_in_label.setText(f"{ft}' {inches:.1f}\"")
 
     def _on_slider_changed(self, slider_val: int) -> None:
         if self._blocked:
@@ -72,6 +90,7 @@ class LabeledSlider(QWidget):
         self._spinbox.setValue(val)
         if self._imperial_spin is not None:
             self._imperial_spin.setValue(val * self._imperial_factor)
+        self._update_ft_in(val)
         self._blocked = False
         self.value_changed.emit(val)
 
@@ -82,6 +101,7 @@ class LabeledSlider(QWidget):
         self._slider.setValue(int(val * self._scale))
         if self._imperial_spin is not None:
             self._imperial_spin.setValue(val * self._imperial_factor)
+        self._update_ft_in(val)
         self._blocked = False
         self.value_changed.emit(val)
 
@@ -92,6 +112,7 @@ class LabeledSlider(QWidget):
         self._blocked = True
         self._spinbox.setValue(val)
         self._slider.setValue(int(val * self._scale))
+        self._update_ft_in(val)
         self._blocked = False
         self.value_changed.emit(val)
 
@@ -105,6 +126,7 @@ class LabeledSlider(QWidget):
         self._slider.setValue(int(clamped * self._scale))
         if self._imperial_spin is not None:
             self._imperial_spin.setValue(clamped * self._imperial_factor)
+        self._update_ft_in(clamped)
         self._blocked = False
 
     def set_range(self, min_val: float, max_val: float) -> None:

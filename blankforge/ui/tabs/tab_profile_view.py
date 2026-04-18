@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from blankforge.data.model import BoardModel, RailProfile, RailStation
-from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator
+from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator, resolve_thickness_curve
 from blankforge.ui.widgets.value_sliders import LabeledSlider
 
 
@@ -333,7 +333,10 @@ class ProfileViewTab(QWidget):
 
         # Compute geometry for canvas
         width_eval = BoardCurveEvaluator(self._model.curves.width)
-        thick_eval = BoardCurveEvaluator(self._model.curves.thickness)
+        thick_eval = BoardCurveEvaluator(
+            resolve_thickness_curve(self._model.curves.thickness,
+                                    self._model.parameters.thickness_mm)
+        )
         rocker_eval = BoardCurveEvaluator(self._model.curves.rocker)
         pos = station.position_mm
 

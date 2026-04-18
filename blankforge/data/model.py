@@ -13,6 +13,7 @@ class ControlPoint(BaseModel):
     position_mm: float
     value_mm: float
     mode: Literal["fixed", "ratio"] = "fixed"
+    influence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class RailProfile(BaseModel):

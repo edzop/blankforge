@@ -30,7 +30,8 @@ class ParametersTab(QWidget):
 
         MM_TO_IN = 1.0 / 25.4
         self._length = LabeledSlider("Length", 500, 4000, decimals=0, suffix="mm",
-                                     imperial_factor=MM_TO_IN, imperial_suffix="in", imperial_decimals=1)
+                                     imperial_factor=MM_TO_IN, imperial_suffix="in", imperial_decimals=1,
+                                     show_ft_in=True)
         self._width = LabeledSlider("Width", 200, 900, decimals=0, suffix="mm",
                                     imperial_factor=MM_TO_IN, imperial_suffix="in", imperial_decimals=2)
         self._thickness = LabeledSlider("Thickness", 20, 150, decimals=1, suffix="mm",

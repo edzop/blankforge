@@ -5,7 +5,26 @@ import math
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
-from blankforge.data.model import CurveData, RailProfile, RailStation
+from blankforge.data.model import ControlPoint, CurveData, RailProfile, RailStation
+
+
+def resolve_thickness_curve(curve: CurveData, param_thickness_mm: float) -> CurveData:
+    """Return a copy of the thickness curve where ratio-mode points are converted to mm.
+
+    Points with mode='ratio' store a ratio where 1.0 means the global thickness
+    parameter; resolved value = ratio * (param_thickness_mm / 2). Fixed-mode points
+    are unchanged.
+    """
+    param_half_t = param_thickness_mm / 2.0
+    return CurveData(points=[
+        ControlPoint(
+            position_mm=cp.position_mm,
+            value_mm=cp.value_mm * param_half_t if cp.mode == "ratio" else cp.value_mm,
+            mode=cp.mode,
+            influence=cp.influence,
+        )
+        for cp in curve.sorted_points()
+    ])
 
 
 class BoardCurveEvaluator:
@@ -22,14 +41,38 @@ class BoardCurveEvaluator:
             self._constant = 0.0
             return
 
-        # Deduplicate by position (average values at same position)
+        # Apply per-point influence: blend each point's value toward the curve value
+        # that would result if that point were excluded. influence=1 keeps the point
+        # on the curve; influence=0 effectively removes its pull on the curve.
         xs_raw = np.array([p.position_mm for p in pts])
-        ys_raw = np.array([p.value_mm for p in pts])
+        ys_raw = np.array([p.value_mm for p in pts], dtype=float)
+        infl = np.array([getattr(p, "influence", 1.0) for p in pts], dtype=float)
+
+        effective_ys = ys_raw.copy()
+        if len(pts) >= 3:
+            for i in range(len(pts)):
+                if infl[i] < 0.999:
+                    other_xs = np.concatenate([xs_raw[:i], xs_raw[i + 1:]])
+                    other_ys = np.concatenate([ys_raw[:i], ys_raw[i + 1:]])
+                    # Dedup
+                    uxs, inv = np.unique(other_xs, return_inverse=True)
+                    uys = np.zeros_like(uxs, dtype=float)
+                    cnt = np.zeros(len(uxs))
+                    for j, k in enumerate(inv):
+                        uys[k] += other_ys[j]
+                        cnt[k] += 1
+                    uys /= cnt
+                    if len(uxs) >= 2:
+                        excl = PchipInterpolator(uxs, uys, extrapolate=True)
+                        excluded_y = float(excl(xs_raw[i]))
+                        effective_ys[i] = infl[i] * ys_raw[i] + (1.0 - infl[i]) * excluded_y
+
+        # Deduplicate by position (average values at same position)
         unique_xs, inv = np.unique(xs_raw, return_inverse=True)
-        unique_ys = np.zeros_like(unique_xs)
+        unique_ys = np.zeros_like(unique_xs, dtype=float)
         counts = np.zeros(len(unique_xs))
         for i, idx in enumerate(inv):
-            unique_ys[idx] += ys_raw[i]
+            unique_ys[idx] += effective_ys[i]
             counts[idx] += 1
         unique_ys /= counts
 
