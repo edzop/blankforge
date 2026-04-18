@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Optional
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -12,13 +12,15 @@ class ControlPoint(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     position_mm: float
     value_mm: float
+    mode: Literal["fixed", "ratio"] = "fixed"
 
 
 class RailProfile(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     apex_ratio: float = Field(default=0.5, ge=0.0, le=1.0)
-    upper_concave: float = Field(default=0.0, ge=-1.0, le=1.0)
-    lower_rail_angle: float = Field(default=45.0, ge=0.0, le=90.0)
+    deck_concave: float = Field(default=0.0, ge=-1.0, le=1.0)
+    lower_concave: float = Field(default=0.0, ge=-1.0, le=1.0)
+    rail_ratio: float = Field(default=0.35, ge=0.0, le=1.0)
     softness: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
@@ -60,14 +62,6 @@ class BoardCurves(BaseModel):
     rail: list[RailStation] = Field(default_factory=list)
 
 
-class TailConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-    shape: Literal["squaretail", "roundtail", "swallowtail", "dovetail"] = "squaretail"
-    width_mm: float = Field(default=300.0, gt=0)
-    length_mm: float = Field(default=150.0, gt=0)
-    thickness_mm: float = Field(default=45.0, gt=0)
-
-
 class BoardParameters(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     length_mm: float = Field(default=2000.0, gt=0)
@@ -89,7 +83,6 @@ class BoardModel(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     meta: BoardMeta = Field(default_factory=BoardMeta)
     parameters: BoardParameters = Field(default_factory=BoardParameters)
-    tail: TailConfig = Field(default_factory=TailConfig)
     curves: BoardCurves = Field(default_factory=BoardCurves)
 
     @classmethod
@@ -98,22 +91,22 @@ class BoardModel(BaseModel):
         presets: dict[str, dict] = {
             "longboard": {
                 "length_mm": 2743, "width_mm": 560, "thickness_mm": 70, "rocker_mm": 25,
-                "tail_shape": "roundtail", "tail_width": 380, "tail_length": 180, "tail_thickness": 55,
                 "nose_width": 420, "wide_point_width": 560, "wide_point_pos": 0.45,
+                "tail_width": 380,
                 "rocker_nose": 30, "rocker_tail": 10,
                 "thick_center": 70, "thick_nose": 45, "thick_tail": 40,
             },
             "shortboard": {
                 "length_mm": 1880, "width_mm": 510, "thickness_mm": 60, "rocker_mm": 50,
-                "tail_shape": "squaretail", "tail_width": 300, "tail_length": 120, "tail_thickness": 40,
                 "nose_width": 270, "wide_point_width": 510, "wide_point_pos": 0.42,
+                "tail_width": 300,
                 "rocker_nose": 55, "rocker_tail": 20,
                 "thick_center": 60, "thick_nose": 32, "thick_tail": 30,
             },
             "midlength": {
                 "length_mm": 2286, "width_mm": 540, "thickness_mm": 65, "rocker_mm": 35,
-                "tail_shape": "roundtail", "tail_width": 350, "tail_length": 160, "tail_thickness": 48,
                 "nose_width": 370, "wide_point_width": 540, "wide_point_pos": 0.44,
+                "tail_width": 350,
                 "rocker_nose": 38, "rocker_tail": 14,
                 "thick_center": 65, "thick_nose": 40, "thick_tail": 38,
             },
@@ -133,15 +126,9 @@ class BoardModel(BaseModel):
             thickness_mm=p["thickness_mm"],
             rocker_mm=p["rocker_mm"],
         )
-        tail = TailConfig(
-            shape=p["tail_shape"],
-            width_mm=p["tail_width"],
-            length_mm=p["tail_length"],
-            thickness_mm=p["tail_thickness"],
-        )
         curves = _build_template_curves(L, p)
         meta = BoardMeta(name=f"New {template.capitalize()}", template=template)
-        return cls(meta=meta, parameters=parameters, tail=tail, curves=curves)
+        return cls(meta=meta, parameters=parameters, curves=curves)
 
 
 def _build_template_curves(length_mm: float, p: dict) -> BoardCurves:
@@ -170,10 +157,10 @@ def _build_template_curves(length_mm: float, p: dict) -> BoardCurves:
     ]
 
     rail_stations = [
-        RailStation(position_mm=0, profile=RailProfile(apex_ratio=0.55, upper_concave=0.1, lower_rail_angle=55, softness=0.7)),
-        RailStation(position_mm=L * 0.3, profile=RailProfile(apex_ratio=0.5, upper_concave=0.0, lower_rail_angle=45, softness=0.6)),
-        RailStation(position_mm=L * 0.6, profile=RailProfile(apex_ratio=0.45, upper_concave=-0.1, lower_rail_angle=40, softness=0.4)),
-        RailStation(position_mm=L, profile=RailProfile(apex_ratio=0.4, upper_concave=-0.2, lower_rail_angle=35, softness=0.2)),
+        RailStation(position_mm=0,       profile=RailProfile(apex_ratio=0.55, deck_concave=0.1,  lower_concave=0.0,  rail_ratio=0.35, softness=0.8)),
+        RailStation(position_mm=L * 0.3, profile=RailProfile(apex_ratio=0.5,  deck_concave=0.0,  lower_concave=0.2,  rail_ratio=0.3,  softness=0.65)),
+        RailStation(position_mm=L * 0.6, profile=RailProfile(apex_ratio=0.45, deck_concave=-0.1, lower_concave=0.25, rail_ratio=0.25, softness=0.45)),
+        RailStation(position_mm=L,       profile=RailProfile(apex_ratio=0.4,  deck_concave=-0.2, lower_concave=0.1,  rail_ratio=0.2,  softness=0.3)),
     ]
 
     return BoardCurves(

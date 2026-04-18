@@ -86,13 +86,14 @@ class RailProfileEvaluator:
             a = self._stations[i]
             b = self._stations[i + 1]
             if a.position_mm <= position_mm <= b.position_mm:
-                t = (position_mm - a.position_mm) / (b.position_mm - a.position_mm)
+                f = (position_mm - a.position_mm) / (b.position_mm - a.position_mm)
                 pa, pb = a.profile, b.profile
                 return RailProfile(
-                    apex_ratio=pa.apex_ratio + t * (pb.apex_ratio - pa.apex_ratio),
-                    upper_concave=pa.upper_concave + t * (pb.upper_concave - pa.upper_concave),
-                    lower_rail_angle=pa.lower_rail_angle + t * (pb.lower_rail_angle - pa.lower_rail_angle),
-                    softness=pa.softness + t * (pb.softness - pa.softness),
+                    apex_ratio=pa.apex_ratio + f * (pb.apex_ratio - pa.apex_ratio),
+                    deck_concave=pa.deck_concave + f * (pb.deck_concave - pa.deck_concave),
+                    lower_concave=pa.lower_concave + f * (pb.lower_concave - pa.lower_concave),
+                    rail_ratio=pa.rail_ratio + f * (pb.rail_ratio - pa.rail_ratio),
+                    softness=pa.softness + f * (pb.softness - pa.softness),
                 )
         return self._stations[-1].profile
 
@@ -115,47 +116,64 @@ class RailProfileEvaluator:
         if profile is None:
             profile = self.at(position_mm)
         w = half_width_mm
-        t = half_thickness_mm * 2.0  # full thickness
+        ht = half_thickness_mm
+        t = ht * 2.0  # full thickness
 
-        apex_z = profile.apex_ratio * t
-        softness_r = max(1.0, profile.softness * 20.0)  # rail arc radius mm
+        r = max(1.0, profile.rail_ratio * ht)
+        cy = w - r
+
+        # apex_ratio controls height of the widest rail point:
+        # 1.0 = apex near deck (high rail), 0.0 = apex at hull level (low rail)
+        cz = profile.apex_ratio * max(0.0, t - r)
+        arc_top_z = cz + r  # height where arc meets the deck segment
+
+        # Softness controls arc sweep: 0 → 90° arc only, 1 → arc wraps to hull
+        end_angle = -(math.pi / 2) * profile.softness
+        total_sweep = math.pi / 2 - end_angle
+
+        arc_end_y = cy + r * math.cos(end_angle)
+        arc_end_z = cz + r * math.sin(end_angle)
 
         pts = []
 
-        # Segment 1: Upper deck — (0, t) → (w, apex_z)
+        # Segment 1: Deck — (0, t) → (cy, arc_top_z) with optional concavity.
+        # Linear slope from centerline deck height to arc-top height; sin envelope for concavity.
         n_deck = n_points // 4
         for i in range(n_deck + 1):
             u = i / n_deck
-            y = w * u
-            z_base = t + (apex_z - t) * u
-            concave = profile.upper_concave * t * 0.15 * math.sin(u * math.pi)
-            z = z_base + concave
+            y = cy * u
+            z_base = t + (arc_top_z - t) * u
+            z = z_base + profile.deck_concave * t * 0.15 * math.sin(u * math.pi)
             pts.append((y, z))
 
-        # Segment 2: Rail arc — quarter-circle from (w, apex_z) curving downward
-        # Arc center at (w - softness_r, apex_z); sweeps angle 0 → -π/2
-        # At angle=0: point = (w, apex_z) — joins deck end exactly (C0 continuous)
-        # At angle=-π/2: point = (w - softness_r, apex_z - softness_r)
-        n_rail = n_points // 8
+        # Segment 2: Rail arc — π/2 → end_angle
+        n_rail = n_points // 4
         for i in range(1, n_rail + 1):
             u = i / n_rail
-            angle = -math.pi / 2 * u
-            y = (w - softness_r) + softness_r * math.cos(angle)
-            z = apex_z + softness_r * math.sin(angle)
+            angle = math.pi / 2 - total_sweep * u
+            y = cy + r * math.cos(angle)
+            z = cz + r * math.sin(angle)
             pts.append((y, z))
 
-        # Segment 3: Lower hull — (w - softness_r, apex_z - softness_r) → (0, 0)
-        rail_end_y = w - softness_r
-        rail_end_z = apex_z - softness_r
+        # Segment 3: Hull.
+        # If arc ends above hull plane (z>0), drop vertically to hull then go horizontal.
+        # This preserves full board thickness regardless of softness/apex settings.
         n_hull = n_points // 4
-        for i in range(1, n_hull + 1):
-            u = i / n_hull
-            y = rail_end_y * (1.0 - u)
-            # Smooth convex bottom: slight bow keeps the bottom relatively flat
-            z = rail_end_z * (1.0 - u) * (1.0 - 0.3 * u * (1.0 - u))
+        if arc_end_z > 0.5:
+            n_drop = max(2, n_hull // 2)
+            for i in range(1, n_drop + 1):
+                u = i / n_drop
+                pts.append((arc_end_y, arc_end_z * (1.0 - u)))
+            n_flat = max(2, n_hull - n_drop)
+        else:
+            n_flat = n_hull
+        for i in range(1, n_flat + 1):
+            u = i / n_flat
+            y = arc_end_y * (1.0 - u)
+            z = max(0.0, -profile.lower_concave * t * 0.15 * math.sin(u * math.pi))
             pts.append((y, z))
 
         pts_arr = np.array(pts, dtype=np.float32)
         pts_arr[:, 0] = np.clip(pts_arr[:, 0], 0, w)
-        pts_arr[:, 1] = np.clip(pts_arr[:, 1], 0, t + abs(profile.upper_concave) * t * 0.15)
+        pts_arr[:, 1] = np.clip(pts_arr[:, 1], 0, t + abs(profile.deck_concave) * t * 0.15)
         return pts_arr

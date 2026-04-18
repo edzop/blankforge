@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
-    QFileDialog, QLabel, QMainWindow, QMessageBox,
+    QDialog, QFileDialog, QLabel, QMainWindow, QMessageBox,
     QStatusBar, QTabWidget, QWidget,
 )
 
@@ -18,7 +19,7 @@ from blankforge.ui.tabs.tab_quad_view import QuadViewTab
 from blankforge.ui.tabs.tab_rendered_view import RenderedViewTab
 from blankforge.ui.tabs.tab_side_view import SideViewTab
 from blankforge.ui.tabs.tab_statistics import StatisticsTab
-from blankforge.ui.tabs.tab_template import TemplateTab
+from blankforge.ui.tabs.tab_template import NewBoardDialog
 from blankforge.ui.tabs.tab_top_view import TopViewTab
 
 
@@ -78,7 +79,6 @@ class BlankForgeWindow(QMainWindow):
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self.setCentralWidget(self._tabs)
 
-        self._tab_template = TemplateTab(self.model, self.model_changed)
         self._tab_parameters = ParametersTab(self.model, self.model_changed)
         self._tab_top = TopViewTab(self.model, self.model_changed)
         self._tab_side = SideViewTab(self.model, self.model_changed)
@@ -88,15 +88,14 @@ class BlankForgeWindow(QMainWindow):
         self._tab_stats = StatisticsTab(self.model, self.model_changed)
         self._tab_export = ExportTab(self.model, self.model_changed)
 
-        self._tabs.addTab(self._tab_template, "1 Template")
-        self._tabs.addTab(self._tab_parameters, "2 Parameters")
-        self._tabs.addTab(self._tab_top, "3 Top View")
-        self._tabs.addTab(self._tab_side, "4 Side View")
-        self._tabs.addTab(self._tab_profile, "5 Profile View")
-        self._tabs.addTab(self._tab_rendered, "6 Rendered View")
-        self._tabs.addTab(self._tab_quad, "7 Quad View")
-        self._tabs.addTab(self._tab_stats, "8 Statistics")
-        self._tabs.addTab(self._tab_export, "9 Export")
+        self._tabs.addTab(self._tab_parameters, "Parameters")
+        self._tabs.addTab(self._tab_top, "Top View")
+        self._tabs.addTab(self._tab_side, "Side View")
+        self._tabs.addTab(self._tab_profile, "Rails")
+        self._tabs.addTab(self._tab_rendered, "Rendered View")
+        self._tabs.addTab(self._tab_quad, "Quad View")
+        self._tabs.addTab(self._tab_stats, "Statistics")
+        self._tabs.addTab(self._tab_export, "Export")
 
         self._status_label = QLabel("Ready")
         status_bar = QStatusBar()
@@ -118,6 +117,10 @@ class BlankForgeWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("E&xit", self.close)
 
+        view_menu = menu.addMenu("&View")
+        self._fullscreen_action = view_menu.addAction("&Full Screen", self._toggle_fullscreen, "F11")
+        self._fullscreen_action.setCheckable(True)
+
         help_menu = menu.addMenu("&Help")
         help_menu.addAction("About BlankForge", self._about)
 
@@ -130,7 +133,6 @@ class BlankForgeWindow(QMainWindow):
         self._tab_side.refresh_from_model()
         self._tab_profile.refresh_from_model()
         self._tab_quad.refresh_from_model()
-        self._tab_template.refresh_from_model()
         self._trigger_geometry_build()
 
     def _trigger_geometry_build(self) -> None:
@@ -162,7 +164,6 @@ class BlankForgeWindow(QMainWindow):
             loaded = SurfboardSerializer.load(path)
             self.model.meta = loaded.meta
             self.model.parameters = loaded.parameters
-            self.model.tail = loaded.tail
             self.model.curves = loaded.curves
             self._current_file = path
             self.setWindowTitle(f"BlankForge — {path.name}")
@@ -171,14 +172,24 @@ class BlankForgeWindow(QMainWindow):
             QMessageBox.critical(self, "Load Failed", str(e))
 
     def _new_file(self) -> None:
-        new_model = BoardModel.from_template("shortboard")
+        dlg = NewBoardDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_model = BoardModel.from_template(dlg.selected_template())
         self.model.meta = new_model.meta
         self.model.parameters = new_model.parameters
-        self.model.tail = new_model.tail
         self.model.curves = new_model.curves
         self._current_file = None
         self.setWindowTitle("BlankForge — Untitled")
         self.model_changed.emit()
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+            self._fullscreen_action.setChecked(False)
+        else:
+            self.showFullScreen()
+            self._fullscreen_action.setChecked(True)
 
     def _open_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open Surfboard", "", "Surfboard Files (*.surfboard);;All Files (*)")
@@ -195,6 +206,8 @@ class BlankForgeWindow(QMainWindow):
     def _save_file_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save As", "", "Surfboard Files (*.surfboard)")
         if path:
+            if not path.lower().endswith(".surfboard"):
+                path += ".surfboard"
             self._current_file = Path(path)
             SurfboardSerializer.save(self.model, self._current_file)
             self.setWindowTitle(f"BlankForge — {self._current_file.name}")
@@ -203,6 +216,8 @@ class BlankForgeWindow(QMainWindow):
     def _export_stl(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export STL", "", "STL Files (*.stl)")
         if path:
+            if not path.lower().endswith(".stl"):
+                path += ".stl"
             try:
                 SurfboardSerializer.export_stl(self.model, Path(path))
                 self._status_label.setText(f"Exported STL: {path}")
@@ -212,6 +227,8 @@ class BlankForgeWindow(QMainWindow):
     def _export_obj(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export OBJ", "", "OBJ Files (*.obj)")
         if path:
+            if not path.lower().endswith(".obj"):
+                path += ".obj"
             try:
                 SurfboardSerializer.export_obj(self.model, Path(path))
                 self._status_label.setText(f"Exported OBJ: {path}")

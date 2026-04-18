@@ -81,13 +81,20 @@ class ExportTab(QWidget):
         }
         path, _ = QFileDialog.getSaveFileName(self, "Choose output path", "", filter_map.get(ext, "*"))
         if path:
-            edit.setText(path)
+            edit.setText(self._ensure_ext(path, ext))
+
+    @staticmethod
+    def _ensure_ext(path: str, ext: str) -> str:
+        if not path.lower().endswith(f".{ext}"):
+            path = f"{path}.{ext}"
+        return path
 
     def _export_json(self) -> None:
-        path = self._json_path.text().strip()
-        if not path:
+        path = self._ensure_ext(self._json_path.text().strip(), "surfboard")
+        if not path.strip():
             self._status.setText("Please specify a path.")
             return
+        self._json_path.setText(path)
         try:
             SurfboardSerializer.save(self._model, Path(path))
             self._status.setText(f"Saved: {path}")
@@ -97,10 +104,11 @@ class ExportTab(QWidget):
             self._status.setStyleSheet("color: #f44;")
 
     def _export_stl(self) -> None:
-        path = self._stl_path.text().strip()
-        if not path:
+        path = self._ensure_ext(self._stl_path.text().strip(), "stl")
+        if not path.strip():
             self._status.setText("Please specify a path.")
             return
+        self._stl_path.setText(path)
         try:
             SurfboardSerializer.export_stl(self._model, Path(path), int(self._stl_res.value()))
             self._status.setText(f"Exported STL: {path}")
@@ -110,10 +118,11 @@ class ExportTab(QWidget):
             self._status.setStyleSheet("color: #f44;")
 
     def _export_obj(self) -> None:
-        path = self._obj_path.text().strip()
-        if not path:
+        path = self._ensure_ext(self._obj_path.text().strip(), "obj")
+        if not path.strip():
             self._status.setText("Please specify a path.")
             return
+        self._obj_path.setText(path)
         try:
             SurfboardSerializer.export_obj(self._model, Path(path), int(self._obj_res.value()))
             self._status.setText(f"Exported OBJ: {path}")

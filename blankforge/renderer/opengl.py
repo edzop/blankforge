@@ -32,6 +32,7 @@ VERTEX_SHADER = """
 #version 330 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec3 aColor;
 
 uniform mat4 uMVP;
 uniform mat4 uModel;
@@ -39,11 +40,13 @@ uniform mat3 uNormalMatrix;
 
 out vec3 vNormal;
 out vec3 vFragPos;
+out vec3 vVertexColor;
 
 void main() {
     gl_Position = uMVP * vec4(aPos, 1.0);
     vFragPos = vec3(uModel * vec4(aPos, 1.0));
     vNormal = normalize(uNormalMatrix * aNormal);
+    vVertexColor = aColor;
 }
 """
 
@@ -51,12 +54,15 @@ FRAGMENT_SHADER = """
 #version 330 core
 in vec3 vNormal;
 in vec3 vFragPos;
+in vec3 vVertexColor;
 
 uniform vec3 uCameraPos;
 uniform vec3 uSurfaceColor;
+uniform bool uUseVertexColor;
+uniform bool uFlatColor;
 
 // 3-point lighting
-uniform vec3 uKeyDir;      // direction FROM fragment TO key light
+uniform vec3 uKeyDir;
 uniform vec3 uKeyColor;
 uniform float uKeyStrength;
 
@@ -64,47 +70,39 @@ uniform vec3 uFillDir;
 uniform vec3 uFillColor;
 uniform float uFillStrength;
 
-uniform vec3 uRimDir;      // direction FROM fragment TO rim light (behind subject)
+uniform vec3 uRimDir;
 uniform vec3 uRimColor;
 uniform float uRimStrength;
 
 out vec4 FragColor;
 
-// Blinn-Phong contribution from a single light
-vec3 light_contrib(vec3 N, vec3 V, vec3 L, vec3 color, float strength,
-                   float diff_power, float spec_gloss, float spec_strength) {
+vec3 light_contrib(vec3 N, vec3 V, vec3 L, vec3 lcolor, float strength,
+                   vec3 surf, float diff_power, float spec_gloss, float spec_strength) {
     vec3 Ln = normalize(L);
     float diff = max(dot(N, Ln), 0.0);
     vec3 H = normalize(Ln + V);
     float spec = pow(max(dot(N, H), 0.0), spec_gloss) * spec_strength;
-    return color * strength * (uSurfaceColor * diff * diff_power + vec3(spec));
+    return lcolor * strength * (surf * diff * diff_power + vec3(spec));
 }
 
 void main() {
     vec3 N = normalize(vNormal);
     vec3 V = normalize(uCameraPos - vFragPos);
+    if (uFlatColor) {
+        FragColor = vec4(uSurfaceColor, 1.0);
+        return;
+    }
 
-    // Soft ambient — slightly sky-tinted
-    vec3 ambient = uSurfaceColor * vec3(0.08, 0.10, 0.13);
+    vec3 surf = uUseVertexColor ? vVertexColor : uSurfaceColor;
 
-    // Key: warm white, strong diffuse + sharp specular (main shadow-casting light)
-    vec3 key  = light_contrib(N, V, uKeyDir,  uKeyColor,  uKeyStrength,
-                               1.0, 96.0, 0.45);
-
-    // Fill: cool blue-grey, soft diffuse only, kills harsh shadows
-    vec3 fill = light_contrib(N, V, uFillDir, uFillColor, uFillStrength,
-                               0.9, 1.0, 0.0);
-
-    // Rim: from behind, broad soft glow + thin specular to separate from bg
-    vec3 rim  = light_contrib(N, V, uRimDir,  uRimColor,  uRimStrength,
-                               0.7, 24.0, 0.15);
+    vec3 ambient = surf * vec3(0.03, 0.04, 0.07);
+    vec3 key  = light_contrib(N, V, uKeyDir,  uKeyColor,  uKeyStrength,  surf, 1.0, 128.0, 0.65);
+    vec3 fill = light_contrib(N, V, uFillDir, uFillColor, uFillStrength, surf, 0.7, 1.0,   0.0);
+    vec3 rim  = light_contrib(N, V, uRimDir,  uRimColor,  uRimStrength,  surf, 0.5, 40.0,  0.25);
 
     vec3 result = ambient + key + fill + rim;
-
-    // Reinhard tone mapping + gamma correction
-    result = result / (result + vec3(0.55));
+    result = result / (result + vec3(0.70));
     result = pow(clamp(result, 0.0, 1.0), vec3(1.0 / 2.2));
-
     FragColor = vec4(result, 1.0);
 }
 """
@@ -117,6 +115,7 @@ class CameraState:
     distance: float = 3000.0
     target: np.ndarray = field(default_factory=lambda: np.array([940.0, 0.0, 50.0], dtype=np.float32))
     fov: float = 45.0
+    use_ortho: bool = False
 
     def view_matrix(self) -> np.ndarray:
         az = math.radians(self.azimuth)
@@ -129,6 +128,10 @@ class CameraState:
         return _look_at(eye, self.target, np.array([0, 0, 1], dtype=np.float32))
 
     def projection_matrix(self, aspect: float) -> np.ndarray:
+        if self.use_ortho:
+            h = self.distance * math.tan(math.radians(self.fov / 2))
+            w = h * aspect
+            return _ortho(-w, w, -h, h, 10.0, 20000.0)
         return _perspective(self.fov, aspect, 10.0, 20000.0)
 
     def eye_position(self) -> np.ndarray:
@@ -140,11 +143,21 @@ class CameraState:
             math.sin(el),
         ], dtype=np.float32)
 
-    def reset_for_board(self, length_mm: float) -> None:
+    def reset_for_board(self, length_mm: float, aspect: float = 1.5) -> None:
         self.target = np.array([length_mm / 2, 0.0, 30.0], dtype=np.float32)
-        self.distance = length_mm * 1.6
+        half_fov = math.tan(math.radians(self.fov / 2.0))
+        d_for_length = (length_mm / 2.0) / (max(aspect, 0.01) * half_fov)
+        self.distance = d_for_length * 1.15  # slightly looser for perspective view
         self.azimuth = 45.0
         self.elevation = 25.0
+        self.use_ortho = False
+
+    def fit_board(self, length_mm: float, aspect: float = 1.5) -> None:
+        self.target = np.array([length_mm / 2, 0.0, 30.0], dtype=np.float32)
+        # Fit so the board's length spans the view width with a small margin.
+        half_fov = math.tan(math.radians(self.fov / 2.0))
+        d_for_length = (length_mm / 2.0) / (max(aspect, 0.01) * half_fov)
+        self.distance = d_for_length * 1.08  # 8% margin
 
 
 class OpenGLBoardRenderer(AbstractRenderer):
@@ -152,9 +165,16 @@ class OpenGLBoardRenderer(AbstractRenderer):
         self._vao = None
         self._vbo_verts = None
         self._vbo_norms = None
+        self._vbo_colors = None
         self._ebo = None
+        self._vao_lines = None
+        self._vbo_lines = None
+        self._n_line_verts = 0
         self._shader_program = None
         self._n_indices = 0
+        self._n_verts = 0
+        self._use_vertex_colors = False
+        self._wireframe_bg = False
         self._initialized = False
 
     def name(self) -> str:
@@ -171,7 +191,10 @@ class OpenGLBoardRenderer(AbstractRenderer):
         self._vao = gl.glGenVertexArrays(1)
         self._vbo_verts = gl.glGenBuffers(1)
         self._vbo_norms = gl.glGenBuffers(1)
+        self._vbo_colors = gl.glGenBuffers(1)
         self._ebo = gl.glGenBuffers(1)
+        self._vao_lines = gl.glGenVertexArrays(1)
+        self._vbo_lines = gl.glGenBuffers(1)
         self._initialized = True
 
     def update_mesh(self, mesh: BoardMesh) -> None:
@@ -181,6 +204,8 @@ class OpenGLBoardRenderer(AbstractRenderer):
         if gl is None:
             return
         self._n_indices = len(mesh.triangles) * 3
+        self._n_verts = len(mesh.vertices)
+        self._use_vertex_colors = False
 
         gl.glBindVertexArray(self._vao)
 
@@ -194,11 +219,60 @@ class OpenGLBoardRenderer(AbstractRenderer):
         gl.glEnableVertexAttribArray(1)
         gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
 
+        default_colors = np.ones((self._n_verts, 3), dtype=np.float32)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._vbo_colors)
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, default_colors.nbytes, default_colors, gl.GL_DYNAMIC_DRAW)
+        gl.glEnableVertexAttribArray(2)
+        gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+
         indices = mesh.triangles.astype(np.uint32)
         gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, self._ebo)
         gl.glBufferData(gl.GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, gl.GL_STATIC_DRAW)
 
         gl.glBindVertexArray(0)
+
+    def update_wireframe_lines(self, verts: np.ndarray | None) -> None:
+        """Upload line vertex pairs (Nx3 float32, drawn as GL_LINES)."""
+        gl = _import_gl()
+        if gl is None or not self._initialized:
+            return
+        if verts is None or len(verts) == 0:
+            self._n_line_verts = 0
+            return
+        verts = verts.astype(np.float32)
+        dummy_norms = np.zeros_like(verts)
+        dummy_colors = np.ones_like(verts)
+
+        gl.glBindVertexArray(self._vao_lines)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._vbo_lines)
+        stride = 9 * 4  # 3 pos + 3 norm + 3 color, interleaved
+        combined = np.hstack([verts, dummy_norms, dummy_colors]).astype(np.float32)
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, combined.nbytes, combined, gl.GL_DYNAMIC_DRAW)
+        gl.glEnableVertexAttribArray(0)
+        gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, stride, None)
+        import ctypes
+        gl.glEnableVertexAttribArray(1)
+        gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(12))
+        gl.glEnableVertexAttribArray(2)
+        gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(24))
+        gl.glBindVertexArray(0)
+        self._n_line_verts = len(verts)
+
+    def set_wireframe_background(self, enabled: bool) -> None:
+        self._wireframe_bg = enabled
+
+    def update_vertex_colors(self, colors: np.ndarray | None) -> None:
+        gl = _import_gl()
+        if gl is None or not self._initialized:
+            return
+        if colors is None:
+            self._use_vertex_colors = False
+            return
+        gl.glBindVertexArray(self._vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._vbo_colors)
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, colors.nbytes, colors.astype(np.float32), gl.GL_DYNAMIC_DRAW)
+        gl.glBindVertexArray(0)
+        self._use_vertex_colors = True
 
     def paint(self, width: int, height: int, camera: CameraState) -> None:
         if not self._initialized or self._n_indices == 0:
@@ -225,31 +299,49 @@ class OpenGLBoardRenderer(AbstractRenderer):
         _set_uniform_mat3(gl, self._shader_program, "uNormalMatrix", normal_mat)
         _set_uniform_vec3(gl, self._shader_program, "uCameraPos", camera.eye_position())
         _set_uniform_vec3(gl, self._shader_program, "uSurfaceColor", np.array([0.86, 0.83, 0.76], dtype=np.float32))
+        _set_uniform_bool(gl, self._shader_program, "uUseVertexColor", self._use_vertex_colors)
 
-        # Key light — warm, upper-left of default camera view
+        # Key light — warm golden-white, upper-front-left (sun equivalent)
         _set_uniform_vec3(gl, self._shader_program, "uKeyDir",
-                          _norm(np.array([-0.55, -0.65, 0.85], dtype=np.float32)))
+                          _norm(np.array([-0.50, -0.60, 0.90], dtype=np.float32)))
         _set_uniform_vec3(gl, self._shader_program, "uKeyColor",
-                          np.array([1.00, 0.95, 0.82], dtype=np.float32))
-        _set_uniform_float(gl, self._shader_program, "uKeyStrength", 1.0)
+                          np.array([1.00, 0.92, 0.72], dtype=np.float32))
+        _set_uniform_float(gl, self._shader_program, "uKeyStrength", 1.1)
 
-        # Fill light — cool blue-grey, lower-right, softens key shadows
+        # Fill light — desaturated cool sky, weak (let shadows go dark for depth)
         _set_uniform_vec3(gl, self._shader_program, "uFillDir",
-                          _norm(np.array([0.80, 0.40, 0.25], dtype=np.float32)))
+                          _norm(np.array([0.75, 0.35, 0.30], dtype=np.float32)))
         _set_uniform_vec3(gl, self._shader_program, "uFillColor",
-                          np.array([0.60, 0.70, 0.90], dtype=np.float32))
-        _set_uniform_float(gl, self._shader_program, "uFillStrength", 0.38)
+                          np.array([0.45, 0.58, 0.82], dtype=np.float32))
+        _set_uniform_float(gl, self._shader_program, "uFillStrength", 0.22)
 
-        # Rim light — from behind, slightly cool, kisses the rails
+        # Rim light — cold blue-violet from behind, separates board from background
         _set_uniform_vec3(gl, self._shader_program, "uRimDir",
-                          _norm(np.array([0.30, 0.85, -0.40], dtype=np.float32)))
+                          _norm(np.array([0.20, 0.90, -0.35], dtype=np.float32)))
         _set_uniform_vec3(gl, self._shader_program, "uRimColor",
-                          np.array([0.75, 0.85, 1.00], dtype=np.float32))
-        _set_uniform_float(gl, self._shader_program, "uRimStrength", 0.55)
+                          np.array([0.60, 0.75, 1.00], dtype=np.float32))
+        _set_uniform_float(gl, self._shader_program, "uRimStrength", 0.50)
 
+        if self._wireframe_bg:
+            # Dark flat silhouette — custom lines stand out clearly on top
+            _set_uniform_bool(gl, self._shader_program, "uFlatColor", True)
+            _set_uniform_vec3(gl, self._shader_program, "uSurfaceColor",
+                              np.array([0.08, 0.09, 0.12], dtype=np.float32))
+        else:
+            _set_uniform_bool(gl, self._shader_program, "uFlatColor", False)
         gl.glBindVertexArray(self._vao)
         gl.glDrawElements(gl.GL_TRIANGLES, self._n_indices, gl.GL_UNSIGNED_INT, None)
         gl.glBindVertexArray(0)
+
+        if self._n_line_verts > 0:
+            _set_uniform_bool(gl, self._shader_program, "uFlatColor", True)
+            _set_uniform_vec3(gl, self._shader_program, "uSurfaceColor",
+                              np.array([0.7, 0.8, 1.0], dtype=np.float32))
+            gl.glLineWidth(1.2)
+            gl.glBindVertexArray(self._vao_lines)
+            gl.glDrawArrays(gl.GL_LINES, 0, self._n_line_verts)
+            gl.glBindVertexArray(0)
+            gl.glLineWidth(1.0)
 
     def render(self, mesh, output_path, width=1920, height=1080, view="perspective",
                background_color=(0.15, 0.15, 0.15)) -> RendererOutput:
@@ -377,6 +469,12 @@ def _set_uniform_float(gl, prog, name, value: float):
         gl.glUniform1f(loc, float(value))
 
 
+def _set_uniform_bool(gl, prog, name, value: bool):
+    loc = gl.glGetUniformLocation(prog, name)
+    if loc >= 0:
+        gl.glUniform1i(loc, int(value))
+
+
 def _norm(v: np.ndarray) -> np.ndarray:
     return (v / np.linalg.norm(v)).astype(np.float32)
 
@@ -409,4 +507,16 @@ def _perspective(fov_deg: float, aspect: float, near: float, far: float) -> np.n
     m[2, 2] = (far + near) / (near - far)
     m[2, 3] = (2 * far * near) / (near - far)
     m[3, 2] = -1.0
+    return m
+
+
+def _ortho(left: float, right: float, bottom: float, top: float, near: float, far: float) -> np.ndarray:
+    m = np.zeros((4, 4), dtype=np.float32)
+    m[0, 0] = 2.0 / (right - left)
+    m[1, 1] = 2.0 / (top - bottom)
+    m[2, 2] = -2.0 / (far - near)
+    m[0, 3] = -(right + left) / (right - left)
+    m[1, 3] = -(top + bottom) / (top - bottom)
+    m[2, 3] = -(far + near) / (far - near)
+    m[3, 3] = 1.0
     return m

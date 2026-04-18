@@ -49,11 +49,13 @@ class CurveViewport(QWidget):
     point_moved = Signal(int, float, float)
     point_added = Signal(float, float)
     point_deleted = Signal(int)
+    drag_finished = Signal()
 
     # Subclasses set these to configure axis appearance
     x_label: str = "Position (mm)"
     y_label: str = "Value (mm)"
     y_flip: bool = False  # Set True for rocker (positive = up = lower screen Y)
+    x_flip: bool = False  # Set True so nose (pos=0) is on the right
     symmetric: bool = False  # Set True for width (draws mirrored silhouette)
 
     def __init__(self, curve_data: CurveData, parent: QWidget | None = None) -> None:
@@ -101,8 +103,18 @@ class CurveViewport(QWidget):
         self._transform.fit(xs, fit_ys, self.width(), self.height())
         self._fitted = True
 
+    def _screen_x(self, wx: float) -> float:
+        if self.x_flip:
+            wx = self._board_length - wx
+        return wx * self._transform.scale + self._transform.offset.x()
+
+    def _world_x_from_screen(self, sx: float) -> float:
+        wx = (sx - self._transform.offset.x()) / self._transform.scale
+        if self.x_flip:
+            wx = self._board_length - wx
+        return wx
+
     def _screen_y(self, wy: float) -> float:
-        """Map world Y → screen Y, optionally flipping."""
         if self.y_flip:
             wy = -wy
         return wy * self._transform.scale + self._transform.offset.y()
@@ -114,14 +126,10 @@ class CurveViewport(QWidget):
         return wy
 
     def _to_screen(self, wx: float, wy: float) -> QPointF:
-        sx = wx * self._transform.scale + self._transform.offset.x()
-        sy = self._screen_y(wy)
-        return QPointF(sx, sy)
+        return QPointF(self._screen_x(wx), self._screen_y(wy))
 
     def _from_screen(self, sx: float, sy: float) -> tuple[float, float]:
-        wx = (sx - self._transform.offset.x()) / self._transform.scale
-        wy = self._world_y_from_screen(sy)
-        return wx, wy
+        return self._world_x_from_screen(sx), self._world_y_from_screen(sy)
 
     def _sorted_points(self) -> list[ControlPoint]:
         return self._curve.sorted_points()
@@ -180,14 +188,12 @@ class CurveViewport(QWidget):
         pen = QPen(QColor(50, 52, 60))
         pen.setWidth(1)
         p.setPen(pen)
-        # Vertical gridlines every 200mm
-        step = 200.0
-        x = 0.0
-        while x <= self._board_length + step:
+        # Vertical gridlines at 0.0, 0.1, …, 1.0 of board length
+        for i in range(11):
+            x = i / 10.0 * self._board_length
             sx = self._to_screen(x, 0).x()
             if 0 <= sx <= self.width():
                 p.drawLine(int(sx), 0, int(sx), self.height())
-            x += step
         # Horizontal zero line
         sy_zero = int(self._to_screen(0, 0).y())
         pen_zero = QPen(QColor(70, 72, 80))
@@ -260,15 +266,14 @@ class CurveViewport(QWidget):
         font = QFont("monospace", 8)
         p.setFont(font)
         p.setPen(QColor(120, 125, 135))
-        # X axis ticks
-        step = 200.0
-        x = 0.0
-        while x <= self._board_length + step:
+        # X axis ratio labels: 0.0, 0.1, …, 1.0
+        for i in range(11):
+            frac = i / 10.0
+            x = frac * self._board_length
             sp = self._to_screen(x, 0)
-            sy_zero = sp.y()
             if 0 <= sp.x() <= self.width():
-                p.drawText(QRectF(sp.x() - 20, sy_zero + 4, 40, 14), Qt.AlignmentFlag.AlignCenter, f"{int(x)}")
-            x += step
+                p.drawText(QRectF(sp.x() - 20, sp.y() + 4, 40, 14),
+                           Qt.AlignmentFlag.AlignCenter, f"{frac:.1f}")
 
     def mousePressEvent(self, event) -> None:
         sx, sy = event.position().x(), event.position().y()
@@ -289,13 +294,12 @@ class CurveViewport(QWidget):
             idx = self._hit_test(sx, sy)
             if idx is not None:
                 self._selected_idx = idx
-                self._drag_active = True
+                # _drag_active set in mouseMoveEvent only when mouse actually moves
                 self._drag_start_world = self._from_screen(sx, sy)
                 pt = self._sorted_points()[idx]
                 self._drag_start_pt = (pt.position_mm, pt.value_mm)
                 self.point_selected.emit(idx)
             else:
-                # Double-click adds a point
                 if event.type().name == "MouseButtonDblClick":
                     wx, wy = self._from_screen(sx, sy)
                     self.point_added.emit(wx, wy)
@@ -304,10 +308,14 @@ class CurveViewport(QWidget):
     def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             sx, sy = event.position().x(), event.position().y()
-            idx = self._hit_test(sx, sy)
-            if idx is None:
-                wx, wy = self._from_screen(sx, sy)
-                self.point_added.emit(max(0.0, wx), max(0.0, wy))
+            # Use a wider radius so a near-miss double-click on an existing point doesn't add one
+            for pt in self._sorted_points():
+                sp = self._to_screen(pt.position_mm, pt.value_mm)
+                dx, dy = sx - sp.x(), sy - sp.y()
+                if (dx * dx + dy * dy) ** 0.5 < HIT_RADIUS_PX * 2.5:
+                    return
+            wx, wy = self._from_screen(sx, sy)
+            self.point_added.emit(max(0.0, wx), max(0.0, wy))
 
     def mouseMoveEvent(self, event) -> None:
         sx, sy = event.position().x(), event.position().y()
@@ -319,7 +327,7 @@ class CurveViewport(QWidget):
             )
             self.update()
             return
-        if self._drag_active and self._drag_start_world is not None:
+        if self._drag_start_world is not None and self._selected_idx is not None:
             wx, wy = self._from_screen(sx, sy)
             dx = wx - self._drag_start_world[0]
             dy = wy - self._drag_start_world[1]
@@ -327,6 +335,7 @@ class CurveViewport(QWidget):
             new_val = self._drag_start_pt[1] + dy
             new_pos = max(0.0, min(self._board_length, new_pos))
             new_val = max(0.0, new_val)
+            self._drag_active = True
             self.point_moved.emit(self._selected_idx, new_pos, new_val)
             self.update()
             return
@@ -340,9 +349,12 @@ class CurveViewport(QWidget):
             self._pan_start = None
             self._pan_offset_start = None
         if event.button() == Qt.MouseButton.LeftButton:
+            was_dragging = self._drag_active
             self._drag_active = False
             self._drag_start_world = None
             self._drag_start_pt = None
+            if was_dragging:
+                self.drag_finished.emit()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         delta = event.angleDelta().y()
@@ -350,9 +362,10 @@ class CurveViewport(QWidget):
         sx, sy = event.position().x(), event.position().y()
         wx, wy = self._from_screen(sx, sy)
         self._transform.scale *= factor
-        # Keep mouse world position fixed
+        # Keep mouse world position fixed after scale change
+        flipped_wx = self._board_length - wx if self.x_flip else wx
         self._transform.offset = QPointF(
-            sx - wx * self._transform.scale,
+            sx - flipped_wx * self._transform.scale,
             sy - self._screen_y_raw(wy),
         )
         self.update()

@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget,
 )
 
 from blankforge.data.model import BoardModel, RailProfile, RailStation
@@ -29,7 +29,7 @@ class ProfileCanvas(QWidget):
         profile: RailProfile,
         half_width: float,
         half_thickness: float,
-        ghosts: list[tuple[RailProfile, float, float, float]] | None = None,
+        ghosts: list[tuple[RailProfile, float, float, float, bool]] | None = None,
     ) -> None:
         self._profile = profile
         self._half_width = half_width
@@ -42,12 +42,15 @@ class ProfileCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(30, 32, 36))
 
-        # Draw ghosts first
-        for ghost_profile, ghost_hw, ghost_ht, alpha in self._ghost_profiles:
-            self._draw_cross_section(p, ghost_profile, ghost_hw, ghost_ht, alpha)
+        # Draw station scale grid before profiles
+        self._draw_scale_grid(p)
+
+        # Draw ghosts first (is_next in slot [4])
+        for ghost in self._ghost_profiles:
+            self._draw_cross_section(p, ghost[0], ghost[1], ghost[2], ghost[3], ghost[4])
 
         # Draw current station
-        self._draw_cross_section(p, self._profile, self._half_width, self._half_thickness, 1.0)
+        self._draw_cross_section(p, self._profile, self._half_width, self._half_thickness, 1.0, None)
 
         # Draw centerline
         cx, cy = self.width() / 2, self.height() / 2
@@ -57,6 +60,81 @@ class ProfileCanvas(QWidget):
         p.drawLine(int(cx), 0, int(cx), self.height())
         p.drawLine(0, int(cy), self.width(), int(cy))
 
+        # Color key (top-right)
+        self._draw_color_key(p)
+
+    def _draw_scale_grid(self, p: QPainter) -> None:
+        from PySide6.QtGui import QFontMetrics
+        w, h = self.width(), self.height()
+        hw = self._half_width
+        ht = self._half_thickness
+        t = ht * 2.0
+        if hw < 1 or ht < 1:
+            return
+
+        margin = 0.12
+        scale = min(w * (1 - 2 * margin) / (hw * 2 + 1), h * (1 - 2 * margin) / (t + 1))
+        cx, cy = w / 2, h / 2
+        thickness = t
+
+        def sx(y_mm):  return cx + y_mm * scale
+        def sy(z_mm):  return cy - (z_mm - thickness / 2) * scale
+
+        pen = QPen(QColor(80, 90, 110, 90))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setWidthF(0.8)
+        p.setPen(pen)
+
+        from PySide6.QtWidgets import QApplication
+        font = QApplication.font()
+        p.setFont(font)
+        fm = QFontMetrics(font)
+
+        # Horizontal grid: z = 0 (hull) and z = t (deck)
+        for z_mm, label in [(0.0, f"0"), (t, f"{t:.0f} mm")]:
+            sy_val = sy(z_mm)
+            p.drawLine(int(sx(-hw)), int(sy_val), int(sx(hw)), int(sy_val))
+            p.setPen(QColor(170, 200, 230, 230))
+            p.drawText(int(sx(hw)) + 4, int(sy_val) + fm.ascent() // 2, label)
+            p.setPen(pen)
+
+        # Vertical grid: y = -hw (left rail), y = 0 (centerline already drawn), y = hw (right rail)
+        for y_mm, label in [(-hw, f"{hw*2:.0f} mm"), (hw, "")]:
+            sx_val = sx(y_mm)
+            p.drawLine(int(sx_val), int(sy(0)), int(sx_val), int(sy(t)))
+            if label:
+                p.setPen(QColor(170, 200, 230, 230))
+                p.drawText(int(sx(-hw)) - fm.horizontalAdvance(label) - 4,
+                           int(sy(t / 2)) + fm.ascent() // 2, label)
+                p.setPen(pen)
+
+    def _draw_color_key(self, p: QPainter) -> None:
+        from PySide6.QtGui import QFont, QFontMetrics
+        font = QFont("monospace", 8)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        entries = [
+            (QColor(60, 170, 100), "Previous"),
+            (QColor(80, 140, 200), "Current"),
+            (QColor(210, 190, 60), "Next"),
+        ]
+        pad, swatch, gap = 6, 10, 4
+        line_h = max(fm.height(), swatch) + 3
+        box_w = swatch + gap + max(fm.horizontalAdvance(e[1]) for e in entries) + pad * 2
+        box_h = line_h * len(entries) + pad * 2
+        x = self.width() - box_w - 6
+        y = 6
+        p.setBrush(QColor(20, 22, 28, 200))
+        p.setPen(QPen(QColor(70, 80, 100, 180)))
+        p.drawRoundedRect(x, y, box_w, box_h, 5, 5)
+        for i, (color, label) in enumerate(entries):
+            ey = y + pad + i * line_h
+            p.setBrush(color)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(x + pad, ey + (line_h - swatch) // 2, swatch, swatch, 2, 2)
+            p.setPen(QColor(190, 210, 240))
+            p.drawText(x + pad + swatch + gap, ey + fm.ascent() + (line_h - fm.height()) // 2, label)
+
     def _draw_cross_section(
         self,
         p: QPainter,
@@ -64,18 +142,17 @@ class ProfileCanvas(QWidget):
         hw: float,
         ht: float,
         alpha: float,
+        is_next: bool | None = None,
     ) -> None:
         evaluator = RailProfileEvaluator([])
-        pts = evaluator.cross_section_points(0, hw, ht, n_points=64)
+        pts = evaluator.cross_section_points(0, hw, ht, n_points=64, profile=profile)
         if pts is None or len(pts) == 0:
             return
 
-        # Scale to widget
         w, h = self.width(), self.height()
         margin = 0.12
         scale = min(w * (1 - 2 * margin) / (hw * 2 + 1), h * (1 - 2 * margin) / (ht * 2 + 1))
         cx, cy = w / 2, h / 2
-
         thickness = float(ht * 2)
 
         def to_screen(y, z):
@@ -83,11 +160,9 @@ class ProfileCanvas(QWidget):
             sy = cy - (z - thickness / 2) * scale
             return sx, sy
 
-        # Build full cross-section (right + mirrored left)
         right = pts
         left = pts[::-1].copy()
         left[:, 0] *= -1
-
         all_pts = np.vstack([right, left])
 
         path = QPainterPath()
@@ -99,8 +174,16 @@ class ProfileCanvas(QWidget):
                 path.lineTo(sx, sy)
         path.closeSubpath()
 
-        color = QColor(80, 140, 200, int(alpha * 255))
-        fill = QColor(60, 100, 160, int(alpha * 80))
+        # Current = blue; previous = green; next = yellow
+        if is_next is None:
+            r, g, b = 80, 140, 200
+        elif is_next:
+            r, g, b = 210, 190, 60
+        else:
+            r, g, b = 60, 170, 100
+
+        color = QColor(r, g, b, int(alpha * 255))
+        fill = QColor(r, g, b, int(alpha * 60))
         p.fillPath(path, fill)
         pen = QPen(color)
         pen.setWidthF(2.0 if alpha >= 1.0 else 1.0)
@@ -122,7 +205,7 @@ class ProfileViewTab(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        layout.addWidget(QLabel("<b>Profile View — Rail Cross-Section</b>"))
+        layout.addWidget(QLabel("<b>Rails — Cross-Section</b>"))
 
         self._canvas = ProfileCanvas()
         layout.addWidget(self._canvas, stretch=1)
@@ -132,43 +215,62 @@ class ProfileViewTab(QWidget):
         self._prev_btn = QPushButton("← Prev")
         self._next_btn = QPushButton("Next →")
         self._station_label = QLabel("Station 0")
-        self._station_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._slider = QSlider(Qt.Orientation.Horizontal)
-        self._slider.setMinimum(0)
+        self._station_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        nav.addWidget(self._station_label, stretch=1)
         nav.addWidget(self._prev_btn)
-        nav.addWidget(self._slider, stretch=1)
-        nav.addWidget(self._station_label)
         nav.addWidget(self._next_btn)
         layout.addLayout(nav)
 
         # Rail controls
         rail_box = QGroupBox("Rail Profile — Current Station")
         rail_form = QVBoxLayout(rail_box)
+
+        copy_all_row = QHBoxLayout()
+        copy_all_row.addStretch()
+        self._copy_all_prev_btn = QPushButton("← All")
+        self._reset_all_btn = QPushButton("↺ All")
+        self._copy_all_next_btn = QPushButton("All →")
+        self._copy_all_prev_btn.setToolTip("Copy all parameters from previous station")
+        self._reset_all_btn.setToolTip("Reset all parameters to default")
+        self._copy_all_next_btn.setToolTip("Copy all parameters from next station")
+        for b in (self._copy_all_prev_btn, self._reset_all_btn, self._copy_all_next_btn):
+            b.setFixedWidth(52)
+        self._copy_all_prev_btn.clicked.connect(lambda: self._copy_all_from_station(-1))
+        self._reset_all_btn.clicked.connect(self._reset_all_to_default)
+        self._copy_all_next_btn.clicked.connect(lambda: self._copy_all_from_station(1))
+        copy_all_row.addWidget(self._copy_all_prev_btn)
+        copy_all_row.addWidget(self._reset_all_btn)
+        copy_all_row.addWidget(self._copy_all_next_btn)
+        rail_form.addLayout(copy_all_row)
+
         self._apex_slider = LabeledSlider("Apex Ratio", 0.0, 1.0, decimals=2)
-        self._concave_slider = LabeledSlider("Upper Concave", -1.0, 1.0, decimals=2)
-        self._angle_slider = LabeledSlider("Rail Angle (°)", 0.0, 90.0, decimals=1)
+        self._deck_concave_slider = LabeledSlider("Deck Concave", -1.0, 1.0, decimals=2)
+        self._lower_concave_slider = LabeledSlider("Lower Concave", -1.0, 1.0, decimals=2)
+        self._rail_ratio_slider = LabeledSlider("Rail Ratio", 0.0, 1.0, decimals=2)
         self._softness_slider = LabeledSlider("Softness", 0.0, 1.0, decimals=2)
-        for w in [self._apex_slider, self._concave_slider, self._angle_slider, self._softness_slider]:
-            rail_form.addWidget(w)
+        for slider, field in [
+            (self._apex_slider, "apex_ratio"),
+            (self._deck_concave_slider, "deck_concave"),
+            (self._lower_concave_slider, "lower_concave"),
+            (self._rail_ratio_slider, "rail_ratio"),
+            (self._softness_slider, "softness"),
+        ]:
+            rail_form.addWidget(self._make_slider_row(slider, field))
         layout.addWidget(rail_box)
 
         # Signals
         self._prev_btn.clicked.connect(self._go_prev)
         self._next_btn.clicked.connect(self._go_next)
-        self._slider.valueChanged.connect(self._on_station_slider)
-        self._apex_slider.value_changed.connect(self._on_rail_changed)
-        self._concave_slider.value_changed.connect(self._on_rail_changed)
-        self._angle_slider.value_changed.connect(self._on_rail_changed)
-        self._softness_slider.value_changed.connect(self._on_rail_changed)
+        for sl in [self._apex_slider, self._deck_concave_slider, self._lower_concave_slider,
+                   self._rail_ratio_slider, self._softness_slider]:
+            sl.value_changed.connect(self._on_rail_changed)
 
         self.refresh_from_model()
 
     def refresh_from_model(self) -> None:
         self._updating = True
         n = len(self._model.curves.rail)
-        self._slider.setMaximum(max(0, n - 1))
         self._station_idx = min(self._station_idx, max(0, n - 1))
-        self._slider.setValue(self._station_idx)
         self._update_station_display()
         self._updating = False
 
@@ -180,15 +282,22 @@ class ProfileViewTab(QWidget):
             return
 
         idx = self._station_idx
-        self._station_label.setText(f"Station {idx + 1} / {n}")
+        if idx == 0:
+            label = f"Nose Station (1 / {n})"
+        elif idx == n - 1:
+            label = f"Tail Station ({n} / {n})"
+        else:
+            label = f"Station {idx + 1} / {n}"
+        self._station_label.setText(label)
 
         station = rail[idx]
         prof = station.profile
 
         self._updating = True
         self._apex_slider.set_value(prof.apex_ratio)
-        self._concave_slider.set_value(prof.upper_concave)
-        self._angle_slider.set_value(prof.lower_rail_angle)
+        self._deck_concave_slider.set_value(prof.deck_concave)
+        self._lower_concave_slider.set_value(prof.lower_concave)
+        self._rail_ratio_slider.set_value(prof.rail_ratio)
         self._softness_slider.set_value(prof.softness)
         self._updating = False
 
@@ -200,7 +309,7 @@ class ProfileViewTab(QWidget):
         hw = float(width_eval(pos))
         ht = float(thick_eval(pos))
 
-        # Build ghost stations
+        # Build ghost stations (previous = darker, next = lighter)
         ghosts = []
         for offset in [-2, -1, 1, 2]:
             ghost_idx = idx + offset
@@ -209,26 +318,82 @@ class ProfileViewTab(QWidget):
                 ghost_hw = float(width_eval(ghost_s.position_mm))
                 ghost_ht = float(thick_eval(ghost_s.position_mm))
                 alpha = 0.2 if abs(offset) == 2 else 0.45
-                ghosts.append((ghost_s.profile, ghost_hw, ghost_ht, alpha))
+                is_next = offset > 0
+                ghosts.append((ghost_s.profile, ghost_hw, ghost_ht, alpha, is_next))
 
         self._canvas.set_profile(prof, hw, ht, ghosts)
+
+    def _make_slider_row(self, slider: LabeledSlider, field: str) -> QWidget:
+        container = QWidget()
+        h = QHBoxLayout(container)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(3)
+        h.addWidget(slider, stretch=1)
+        prev_btn = QPushButton("◀")
+        prev_btn.setFixedWidth(26)
+        prev_btn.setToolTip("Copy from previous station")
+        reset_btn = QPushButton("↺")
+        reset_btn.setFixedWidth(26)
+        reset_btn.setToolTip("Reset to default")
+        next_btn = QPushButton("▶")
+        next_btn.setFixedWidth(26)
+        next_btn.setToolTip("Copy from next station")
+        prev_btn.clicked.connect(lambda _=False, s=slider, f=field: self._copy_field_from_station(-1, s, f))
+        reset_btn.clicked.connect(lambda _=False, s=slider, f=field: self._reset_field(s, f))
+        next_btn.clicked.connect(lambda _=False, s=slider, f=field: self._copy_field_from_station(1, s, f))
+        h.addWidget(prev_btn)
+        h.addWidget(reset_btn)
+        h.addWidget(next_btn)
+        return container
+
+    def _copy_field_from_station(self, offset: int, slider: LabeledSlider, field: str) -> None:
+        rail = self._model.curves.rail
+        src_idx = self._station_idx + offset
+        if not (0 <= src_idx < len(rail)):
+            return
+        slider.set_value(getattr(rail[src_idx].profile, field))
+        self._on_rail_changed()
+
+    def _copy_all_from_station(self, offset: int) -> None:
+        rail = self._model.curves.rail
+        src_idx = self._station_idx + offset
+        if not (0 <= src_idx < len(rail)):
+            return
+        src = rail[src_idx].profile
+        self._updating = True
+        self._apex_slider.set_value(src.apex_ratio)
+        self._deck_concave_slider.set_value(src.deck_concave)
+        self._lower_concave_slider.set_value(src.lower_concave)
+        self._rail_ratio_slider.set_value(src.rail_ratio)
+        self._softness_slider.set_value(src.softness)
+        self._updating = False
+        self._on_rail_changed()
 
     def _go_prev(self) -> None:
         if self._station_idx > 0:
             self._station_idx -= 1
-            self._slider.setValue(self._station_idx)
             self._update_station_display()
 
     def _go_next(self) -> None:
         n = len(self._model.curves.rail)
         if self._station_idx < n - 1:
             self._station_idx += 1
-            self._slider.setValue(self._station_idx)
             self._update_station_display()
 
-    def _on_station_slider(self, val: int) -> None:
-        self._station_idx = val
-        self._update_station_display()
+    def _reset_field(self, slider: LabeledSlider, field: str) -> None:
+        slider.set_value(getattr(RailProfile(), field))
+        self._on_rail_changed()
+
+    def _reset_all_to_default(self) -> None:
+        default = RailProfile()
+        self._updating = True
+        self._apex_slider.set_value(default.apex_ratio)
+        self._deck_concave_slider.set_value(default.deck_concave)
+        self._lower_concave_slider.set_value(default.lower_concave)
+        self._rail_ratio_slider.set_value(default.rail_ratio)
+        self._softness_slider.set_value(default.softness)
+        self._updating = False
+        self._on_rail_changed()
 
     def _on_rail_changed(self, *_) -> None:
         if self._updating:
@@ -238,8 +403,9 @@ class ProfileViewTab(QWidget):
             return
         prof = rail[self._station_idx].profile
         prof.apex_ratio = self._apex_slider.value()
-        prof.upper_concave = self._concave_slider.value()
-        prof.lower_rail_angle = self._angle_slider.value()
+        prof.deck_concave = self._deck_concave_slider.value()
+        prof.lower_concave = self._lower_concave_slider.value()
+        prof.rail_ratio = self._rail_ratio_slider.value()
         prof.softness = self._softness_slider.value()
         self._update_station_display()
         self._model_changed.emit()

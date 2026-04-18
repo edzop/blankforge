@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import numpy as np
 
 from blankforge.data.model import BoardModel
@@ -24,8 +28,8 @@ def test_stats_plausible():
         assert stats.surface_area_cm2 > 0, f"{template}: surface area <= 0"
         # Surfboards: 5–150 liters (5000–150000 cm³)
         assert 5000 < stats.volume_cm3 < 150000, f"{template}: volume {stats.volume_cm3} out of range"
-        assert stats.nose_width_mm < stats.width_mm * 1.1
-        assert stats.tail_width_mm < stats.width_mm * 1.1
+        assert stats.nose_width_1in_mm < stats.width_mm * 1.1
+        assert stats.tail_width_1in_mm < stats.width_mm * 1.1
 
 
 def test_normals_unit_length():

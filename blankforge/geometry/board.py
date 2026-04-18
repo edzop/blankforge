@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import math
 from typing import NamedTuple
 
 import numpy as np
 
-from blankforge.data.model import BoardModel, TailConfig
+from blankforge.data.model import BoardModel, ControlPoint, CurveData
 from blankforge.geometry.curves import BoardCurveEvaluator, RailProfileEvaluator
 
 
@@ -21,8 +20,10 @@ class BoardStats(NamedTuple):
     length_mm: float
     width_mm: float
     thickness_mm: float
-    nose_width_mm: float
-    tail_width_mm: float
+    nose_width_1in_mm: float   # full width at 1" (25.4 mm) from nose
+    nose_width_2in_mm: float   # full width at 2" (50.8 mm) from nose
+    tail_width_1in_mm: float   # full width at 1" (25.4 mm) from tail
+    tail_width_2in_mm: float   # full width at 2" (50.8 mm) from tail
 
 
 def _occt_available() -> bool:
@@ -33,55 +34,23 @@ def _occt_available() -> bool:
         return False
 
 
-def _tail_hw(x: float, L: float, hw_curve: float, tail: TailConfig) -> float:
-    """
-    Returns the effective half-width at position x, applying the tail shape
-    in the last tail.length_mm of the board.
-
-    Shapes:
-      squaretail — constant width to the very end (wide, flat cutoff)
-      roundtail  — tapers smoothly to a rounded point
-      swallowtail — stays wide; at the very end the two lobes are prominent
-      dovetail   — moderate taper with slight concave suggestion
-    """
-    tail_start = L - tail.length_mm
-    if x <= tail_start or tail.length_mm < 1.0:
-        return hw_curve
-
-    t = (x - tail_start) / tail.length_mm  # 0 → 1 within tail region
-    hw_entry = hw_curve  # width at tail_start (from curve)
-    hw_end = tail.width_mm / 2.0  # target full-tail half-width
-
-    if tail.shape == "squaretail":
-        # Blend quickly to tail width, then hold flat — squared-off end
-        blend = min(1.0, t * 3.0)
-        target = hw_end
-    elif tail.shape == "roundtail":
-        # Taper to ~0 following a quarter-circle (pronounced taper, round point)
-        target = hw_end * math.cos(t * math.pi / 2)
-        blend = t
-    elif tail.shape == "swallowtail":
-        # Stay wide (lobes); the width at the very end is slightly WIDER than
-        # the nominal tail width to suggest the two protruding wings
-        target = hw_end * (1.0 + 0.15 * math.sin(t * math.pi))
-        blend = t
-    elif tail.shape == "dovetail":
-        # Moderate taper — ends noticeably narrower than squaretail
-        target = hw_end * (1.0 - 0.45 * t)
-        blend = t
-    else:
-        return hw_curve
-
-    return hw_entry * (1.0 - blend) + target * blend
-
-
 def _build_with_numpy(model: BoardModel, resolution: int) -> tuple[BoardMesh, BoardStats]:
     L = model.parameters.length_mm
     stations = np.linspace(0, L, resolution)
 
     width_eval = BoardCurveEvaluator(model.curves.width)
     rocker_eval = BoardCurveEvaluator(model.curves.rocker)
-    thick_eval = BoardCurveEvaluator(model.curves.thickness)
+
+    # Resolve ratio-mode thickness points: value_mm stores a ratio; multiply by param
+    param_half_t = model.parameters.thickness_mm / 2.0
+    resolved_thick = CurveData(points=[
+        ControlPoint(
+            position_mm=cp.position_mm,
+            value_mm=cp.value_mm * param_half_t if cp.mode == "ratio" else cp.value_mm,
+        )
+        for cp in model.curves.thickness.sorted_points()
+    ])
+    thick_eval = BoardCurveEvaluator(resolved_thick)
     rail_eval = RailProfileEvaluator(model.curves.rail)
 
     # n_contour: number of points around each cross-section (even, for symmetry)
@@ -92,7 +61,6 @@ def _build_with_numpy(model: BoardModel, resolution: int) -> tuple[BoardMesh, Bo
 
     for x in stations:
         hw = float(width_eval(x))    # half-width
-        hw = _tail_hw(x, L, hw, model.tail)  # apply tail shape override
         ht = float(thick_eval(x))    # half-thickness
         rk = float(rocker_eval(x))   # rocker height (bottom of board rises by this)
 
@@ -168,8 +136,10 @@ def _build_with_numpy(model: BoardModel, resolution: int) -> tuple[BoardMesh, Bo
         length_mm=L,
         width_mm=model.parameters.width_mm,
         thickness_mm=model.parameters.thickness_mm,
-        nose_width_mm=float(width_eval(300.0)) * 2,
-        tail_width_mm=float(width_eval(L - 300.0)) * 2,
+        nose_width_1in_mm=float(width_eval(25.4)) * 2,
+        nose_width_2in_mm=float(width_eval(50.8)) * 2,
+        tail_width_1in_mm=float(width_eval(L - 25.4)) * 2,
+        tail_width_2in_mm=float(width_eval(L - 50.8)) * 2,
     )
     return BoardMesh(vertices=vertices, normals=normals, triangles=tris), stats
 

@@ -17,7 +17,6 @@ CM2_TO_FT2 = 0.00107639      # cm² → ft²
 
 
 def _mm_to_ftin(mm: float) -> str:
-    """Convert mm to feet'inches" string, e.g. 1880mm → 6'2\""""
     total_in = mm * MM_TO_IN
     feet = int(total_in // 12)
     inches = total_in % 12
@@ -55,7 +54,6 @@ class StatisticsTab(QWidget):
         header.addWidget(QLabel("<b>Imperial</b>"), stretch=1)
         box_layout.addLayout(header)
 
-        # Separator
         sep = QLabel()
         sep.setFixedHeight(1)
         sep.setStyleSheet("background: #444;")
@@ -65,13 +63,15 @@ class StatisticsTab(QWidget):
         self._imperial_labels: dict[str, QLabel] = {}
 
         rows = [
-            ("volume",        "Volume"),
-            ("surface_area",  "Surface Area"),
-            ("length",        "Length"),
-            ("width",         "Width"),
-            ("thickness",     "Thickness"),
-            ("nose_width",    "Nose Width @ 300mm"),
-            ("tail_width",    "Tail Width @ 300mm"),
+            ("volume",           "Volume"),
+            ("surface_area",     "Surface Area"),
+            ("length",           "Length"),
+            ("width",            "Width"),
+            ("thickness",        "Thickness"),
+            ("nose_width_1in",   "Nose Width @ 1\" from nose"),
+            ("nose_width_2in",   "Nose Width @ 2\" from nose"),
+            ("tail_width_1in",   "Tail Width @ 1\" from tail"),
+            ("tail_width_2in",   "Tail Width @ 2\" from tail"),
         ]
 
         for key, label_text in rows:
@@ -114,11 +114,17 @@ class StatisticsTab(QWidget):
         self._metric_labels["thickness"].setText(f"{stats.thickness_mm:.1f} mm")
         self._imperial_labels["thickness"].setText(_mm_to_in(stats.thickness_mm))
 
-        self._metric_labels["nose_width"].setText(f"{stats.nose_width_mm:.1f} mm")
-        self._imperial_labels["nose_width"].setText(_mm_to_in(stats.nose_width_mm))
+        self._metric_labels["nose_width_1in"].setText(f"{stats.nose_width_1in_mm:.1f} mm")
+        self._imperial_labels["nose_width_1in"].setText(_mm_to_in(stats.nose_width_1in_mm))
 
-        self._metric_labels["tail_width"].setText(f"{stats.tail_width_mm:.1f} mm")
-        self._imperial_labels["tail_width"].setText(_mm_to_in(stats.tail_width_mm))
+        self._metric_labels["nose_width_2in"].setText(f"{stats.nose_width_2in_mm:.1f} mm")
+        self._imperial_labels["nose_width_2in"].setText(_mm_to_in(stats.nose_width_2in_mm))
+
+        self._metric_labels["tail_width_1in"].setText(f"{stats.tail_width_1in_mm:.1f} mm")
+        self._imperial_labels["tail_width_1in"].setText(_mm_to_in(stats.tail_width_1in_mm))
+
+        self._metric_labels["tail_width_2in"].setText(f"{stats.tail_width_2in_mm:.1f} mm")
+        self._imperial_labels["tail_width_2in"].setText(_mm_to_in(stats.tail_width_2in_mm))
 
         self._status.setText("Up to date.")
         self._status.setStyleSheet("color: #4fa;")
