@@ -63,9 +63,19 @@ class BlankForgeWindow(QMainWindow):
         if _icon.exists():
             self.setWindowIcon(_QIcon(str(_icon)))
 
-        self.model = BoardModel.from_template("shortboard")
-        self._builder = BoardGeometryBuilder(use_occt=False)
+        # Load samples/default.surfboard if it exists; otherwise fall back to shortboard template
+        default_path = Path(__file__).parent.parent.parent / "samples" / "default.surfboard"
+        self.model: BoardModel
         self._current_file: Path | None = None
+        if default_path.exists():
+            try:
+                self.model = SurfboardSerializer.load(default_path)
+            except Exception:
+                self.model = BoardModel.from_template("shortboard")
+        else:
+            self.model = BoardModel.from_template("shortboard")
+
+        self._builder = BoardGeometryBuilder(use_occt=False)
         self._build_pending = False
         self._active_workers: list[_GeometryWorker] = []
 

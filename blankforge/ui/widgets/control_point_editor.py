@@ -20,9 +20,9 @@ class ControlPointSliderPanel(QWidget):
 
         self._pos_scale: float = 1.0  # pos_mm = slider_value * _pos_scale
         self._val_scale: float = 1.0  # val_mm = slider_value * _val_scale
-        # Range 0–1.5 covers the full [0, 1] design space with a little headroom
-        self._pos_slider = LabeledSlider("Position", 0.0, 1.5, decimals=3)
-        self._val_slider = LabeledSlider("Value", 0.0, 1.5, decimals=3)
+        # Ratio sliders cap at 1.0 — to go higher, raise the global parameter
+        self._pos_slider = LabeledSlider("Position", 0.0, 1.0, decimals=3)
+        self._val_slider = LabeledSlider("Value", 0.0, 1.0, decimals=3)
         layout.addWidget(self._pos_slider)
         layout.addWidget(self._val_slider)
 

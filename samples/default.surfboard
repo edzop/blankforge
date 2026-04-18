@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "name": "New Shortboard",
+    "template": "shortboard",
+    "version": "1.0",
+    "created": "2026-04-18T07:58:06.605966+00:00",
+    "units": "mm"
+  },
+  "parameters": {
+    "length_mm": 1880.0,
+    "width_mm": 390.0,
+    "thickness_mm": 60.0,
+    "rocker_mm": 50.0
+  },
+  "curves": {
+    "width": {
+      "points": [
+        {
+          "position_mm": 0.0,
+          "value_mm": 6.871270247229317,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 936.24,
+          "value_mm": 195.00000000000009,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 1880.0,
+          "value_mm": 27.974481349267958,
+          "mode": "fixed"
+        }
+      ]
+    },
+    "rocker": {
+      "points": [
+        {
+          "position_mm": 0.0,
+          "value_mm": 140.93150684931507,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 812.5463013698629,
+          "value_mm": -19.855479452054794,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 1880.0,
+          "value_mm": 29.6,
+          "mode": "fixed"
+        }
+      ]
+    },
+    "thickness": {
+      "points": [
+        {
+          "position_mm": 0.0,
+          "value_mm": 5.0,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 812.5463013698629,
+          "value_mm": 25.65,
+          "mode": "fixed"
+        },
+        {
+          "position_mm": 1880.0,
+          "value_mm": 12.5,
+          "mode": "fixed"
+        }
+      ]
+    },
+    "rail": [
+      {
+        "position_mm": 0.0,
+        "profile": {
+          "apex_ratio": 0.98,
+          "deck_concave": 0.1,
+          "lower_concave": 0.0,
+          "rail_ratio": 1.0,
+          "softness": 0.42
+        }
+      },
+      {
+        "position_mm": 812.5463013698629,
+        "profile": {
+          "apex_ratio": 0.9275389138106398,
+          "deck_concave": 0.3230614786197732,
+          "lower_concave": -0.4012491266698046,
+          "rail_ratio": 0.9669416833807888,
+          "softness": 0.4068847284526601
+        }
+      },
+      {
+        "position_mm": 1880.0,
+        "profile": {
+          "apex_ratio": 0.58,
+          "deck_concave": -0.14,
+          "lower_concave": 0.1,
+          "rail_ratio": 0.81,
+          "softness": 0.32
+        }
+      }
+    ]
+  }
+}

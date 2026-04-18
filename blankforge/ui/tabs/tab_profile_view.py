@@ -22,35 +22,61 @@ class ProfileCanvas(QWidget):
         self._profile: RailProfile = RailProfile()
         self._half_width: float = 255.0
         self._half_thickness: float = 30.0
-        self._ghost_profiles: list[tuple[RailProfile, float, float, float]] = []  # (profile, hw, ht, alpha)
+        self._rocker: float = 0.0
+        # ghost: (profile, hw, ht, rocker, alpha, is_next)
+        self._ghost_profiles: list[tuple[RailProfile, float, float, float, float, bool]] = []
 
     def set_profile(
         self,
         profile: RailProfile,
         half_width: float,
         half_thickness: float,
-        ghosts: list[tuple[RailProfile, float, float, float, bool]] | None = None,
+        rocker: float = 0.0,
+        ghosts: list[tuple[RailProfile, float, float, float, float, bool]] | None = None,
     ) -> None:
         self._profile = profile
         self._half_width = half_width
         self._half_thickness = half_thickness
+        self._rocker = rocker
         self._ghost_profiles = ghosts or []
         self.update()
+
+    def _compute_scale(self) -> float:
+        """Single scale shared by current + all ghosts so relative sizes are accurate."""
+        w, h = self.width(), self.height()
+        margin = 0.12
+        max_hw = self._half_width
+        max_ht = self._half_thickness
+        rockers = [self._rocker]
+        for g in self._ghost_profiles:
+            max_hw = max(max_hw, g[1])
+            max_ht = max(max_ht, g[2])
+            rockers.append(g[3])
+        # Vertical extent must accommodate thickest profile + rocker variation between stations
+        rocker_range = max(rockers) - min(rockers)
+        total_v = max_ht * 2.0 + rocker_range
+        return min(
+            w * (1 - 2 * margin) / (max_hw * 2.0 + 1.0),
+            h * (1 - 2 * margin) / (total_v + 1.0),
+        )
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(30, 32, 36))
 
-        # Draw station scale grid before profiles
-        self._draw_scale_grid(p)
+        scale = self._compute_scale()
 
-        # Draw ghosts first (is_next in slot [4])
+        # Draw scale grid for the current station, using the shared scale
+        self._draw_scale_grid(p, scale)
+
+        # Draw ghosts first (back to front so current sits on top)
         for ghost in self._ghost_profiles:
-            self._draw_cross_section(p, ghost[0], ghost[1], ghost[2], ghost[3], ghost[4])
+            self._draw_cross_section(p, ghost[0], ghost[1], ghost[2], ghost[3], ghost[4], ghost[5], scale)
 
-        # Draw current station
-        self._draw_cross_section(p, self._profile, self._half_width, self._half_thickness, 1.0, None)
+        # Draw current station (rocker_offset = 0)
+        self._draw_cross_section(p, self._profile, self._half_width, self._half_thickness,
+                                 self._rocker, 1.0, None, scale)
 
         # Draw centerline
         cx, cy = self.width() / 2, self.height() / 2
@@ -63,7 +89,7 @@ class ProfileCanvas(QWidget):
         # Color key (top-right)
         self._draw_color_key(p)
 
-    def _draw_scale_grid(self, p: QPainter) -> None:
+    def _draw_scale_grid(self, p: QPainter, scale: float) -> None:
         from PySide6.QtGui import QFontMetrics
         w, h = self.width(), self.height()
         hw = self._half_width
@@ -72,8 +98,6 @@ class ProfileCanvas(QWidget):
         if hw < 1 or ht < 1:
             return
 
-        margin = 0.12
-        scale = min(w * (1 - 2 * margin) / (hw * 2 + 1), h * (1 - 2 * margin) / (t + 1))
         cx, cy = w / 2, h / 2
         thickness = t
 
@@ -141,8 +165,10 @@ class ProfileCanvas(QWidget):
         profile: RailProfile,
         hw: float,
         ht: float,
+        rocker: float,
         alpha: float,
         is_next: bool | None = None,
+        scale: float | None = None,
     ) -> None:
         evaluator = RailProfileEvaluator([])
         pts = evaluator.cross_section_points(0, hw, ht, n_points=64, profile=profile)
@@ -150,14 +176,17 @@ class ProfileCanvas(QWidget):
             return
 
         w, h = self.width(), self.height()
-        margin = 0.12
-        scale = min(w * (1 - 2 * margin) / (hw * 2 + 1), h * (1 - 2 * margin) / (ht * 2 + 1))
+        if scale is None:
+            scale = self._compute_scale()
         cx, cy = w / 2, h / 2
         thickness = float(ht * 2)
+        # Vertical offset from current station's centroid: higher rocker → up on screen
+        rocker_offset = rocker - self._rocker
 
         def to_screen(y, z):
             sx = cx + y * scale
-            sy = cy - (z - thickness / 2) * scale
+            # z=t/2 is the station's own centroid; shift by rocker delta
+            sy = cy - (z - thickness / 2 + rocker_offset) * scale
             return sx, sy
 
         right = pts
@@ -235,9 +264,10 @@ class ProfileViewTab(QWidget):
         self._copy_all_next_btn.setToolTip("Copy all parameters from next station")
         for b in (self._copy_all_prev_btn, self._reset_all_btn, self._copy_all_next_btn):
             b.setFixedWidth(52)
-        self._copy_all_prev_btn.clicked.connect(lambda: self._copy_all_from_station(-1))
+        # Prev = toward tail (idx+1), Next = toward nose (idx-1) — matches tail-left / nose-right layout
+        self._copy_all_prev_btn.clicked.connect(lambda: self._copy_all_from_station(+1))
         self._reset_all_btn.clicked.connect(self._reset_all_to_default)
-        self._copy_all_next_btn.clicked.connect(lambda: self._copy_all_from_station(1))
+        self._copy_all_next_btn.clicked.connect(lambda: self._copy_all_from_station(-1))
         copy_all_row.addWidget(self._copy_all_prev_btn)
         copy_all_row.addWidget(self._reset_all_btn)
         copy_all_row.addWidget(self._copy_all_next_btn)
@@ -304,12 +334,16 @@ class ProfileViewTab(QWidget):
         # Compute geometry for canvas
         width_eval = BoardCurveEvaluator(self._model.curves.width)
         thick_eval = BoardCurveEvaluator(self._model.curves.thickness)
+        rocker_eval = BoardCurveEvaluator(self._model.curves.rocker)
         pos = station.position_mm
 
         hw = float(width_eval(pos))
         ht = float(thick_eval(pos))
+        rk = float(rocker_eval(pos))
 
         # Build ghost stations (previous = darker, next = lighter)
+        # Each ghost carries its own rocker so the canvas can offset it vertically
+        # relative to the current station — preserving relative size and height.
         ghosts = []
         for offset in [-2, -1, 1, 2]:
             ghost_idx = idx + offset
@@ -317,11 +351,12 @@ class ProfileViewTab(QWidget):
                 ghost_s = rail[ghost_idx]
                 ghost_hw = float(width_eval(ghost_s.position_mm))
                 ghost_ht = float(thick_eval(ghost_s.position_mm))
+                ghost_rk = float(rocker_eval(ghost_s.position_mm))
                 alpha = 0.2 if abs(offset) == 2 else 0.45
                 is_next = offset > 0
-                ghosts.append((ghost_s.profile, ghost_hw, ghost_ht, alpha, is_next))
+                ghosts.append((ghost_s.profile, ghost_hw, ghost_ht, ghost_rk, alpha, is_next))
 
-        self._canvas.set_profile(prof, hw, ht, ghosts)
+        self._canvas.set_profile(prof, hw, ht, rk, ghosts)
 
     def _make_slider_row(self, slider: LabeledSlider, field: str) -> QWidget:
         container = QWidget()
@@ -338,9 +373,10 @@ class ProfileViewTab(QWidget):
         next_btn = QPushButton("▶")
         next_btn.setFixedWidth(26)
         next_btn.setToolTip("Copy from next station")
-        prev_btn.clicked.connect(lambda _=False, s=slider, f=field: self._copy_field_from_station(-1, s, f))
+        # Prev = toward tail (idx+1), Next = toward nose (idx-1) — matches tail-left / nose-right layout
+        prev_btn.clicked.connect(lambda _=False, s=slider, f=field: self._copy_field_from_station(+1, s, f))
         reset_btn.clicked.connect(lambda _=False, s=slider, f=field: self._reset_field(s, f))
-        next_btn.clicked.connect(lambda _=False, s=slider, f=field: self._copy_field_from_station(1, s, f))
+        next_btn.clicked.connect(lambda _=False, s=slider, f=field: self._copy_field_from_station(-1, s, f))
         h.addWidget(prev_btn)
         h.addWidget(reset_btn)
         h.addWidget(next_btn)
@@ -370,14 +406,16 @@ class ProfileViewTab(QWidget):
         self._on_rail_changed()
 
     def _go_prev(self) -> None:
-        if self._station_idx > 0:
-            self._station_idx -= 1
-            self._update_station_display()
-
-    def _go_next(self) -> None:
+        # Prev moves toward the tail (higher index = position L = tail)
         n = len(self._model.curves.rail)
         if self._station_idx < n - 1:
             self._station_idx += 1
+            self._update_station_display()
+
+    def _go_next(self) -> None:
+        # Next moves toward the nose (lower index = position 0 = nose)
+        if self._station_idx > 0:
+            self._station_idx -= 1
             self._update_station_display()
 
     def _reset_field(self, slider: LabeledSlider, field: str) -> None:

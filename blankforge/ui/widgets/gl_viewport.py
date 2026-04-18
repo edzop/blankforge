@@ -165,9 +165,14 @@ class GLViewport(QOpenGLWidget):
         self._renderer.paint(self.width(), self.height(), self._camera)
 
     def update_mesh(self, mesh: BoardMesh) -> None:
+        # Only auto-frame the camera the first time a mesh is set.
+        # Later updates (parameter tweaks, edits) preserve the current view —
+        # use the Reset / Fit / preset buttons to re-frame explicitly.
+        is_first = self._mesh is None
         self._mesh = mesh
-        L = float(mesh.vertices[:, 0].max()) if len(mesh.vertices) > 0 else 2000.0
-        self._camera.reset_for_board(L, self._aspect())
+        if is_first:
+            L = float(mesh.vertices[:, 0].max()) if len(mesh.vertices) > 0 else 2000.0
+            self._camera.reset_for_board(L, self._aspect())
         if self.isValid():
             self.makeCurrent()
             self._renderer.update_mesh(mesh)

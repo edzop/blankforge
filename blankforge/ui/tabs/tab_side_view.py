@@ -94,7 +94,7 @@ class SideProfileCanvas(QWidget):
         return scale, scale
 
     def _margins(self) -> tuple[int, int, int, int]:
-        return 40, 16, 16, 28  # left, top, right, bottom
+        return 40, 16, 16, 48  # left, top, right, bottom
 
     def _content_bottom(self) -> float:
         # Center the (typically thin) board profile vertically in the canvas
@@ -179,23 +179,26 @@ class SideProfileCanvas(QWidget):
         _, sy_deck = self._to_screen(0.0, max_deck)
         sx_left = min(sx_nose, sx_tail)
 
-        for sy, label in [(sy_hull, "0"), (sy_deck, f"{max_deck:.0f} mm")]:
+        # Top label (max thickness): above its line; bottom label ("0"): below its line.
+        # Both end up outside the board profile so they don't overlap each other or the curve.
+        for sy, label, above in [(sy_deck, f"{max_deck:.0f} mm", True), (sy_hull, "0", False)]:
             p.setPen(pen)
             p.drawLine(int(sx_nose), int(sy), int(sx_tail), int(sy))
             p.setPen(QColor(170, 200, 230, 230))
-            p.drawText(int(sx_left) - fm.horizontalAdvance(label) - 4,
-                       int(sy) + fm.ascent() // 2, label)
+            label_y = int(sy) - 3 if above else int(sy) + fm.ascent() + 3
+            p.drawText(int(sx_left) + 2, label_y, label)
 
         pen2 = QPen(QColor(65, 75, 95, 80))
         pen2.setStyle(Qt.PenStyle.DashLine)
         pen2.setWidthF(0.7)
-        label_y = int(sy_hull) + fm.ascent() + 4
+        # Nose/Tail labels stacked below the "0" label so nothing overlaps
+        nose_tail_y = int(sy_hull) + fm.ascent() * 2 + 10
         for x_mm, lbl in [(0.0, "Nose"), (self._board_length, "Tail")]:
             sxv, _ = self._to_screen(x_mm, 0)
             p.setPen(pen2)
             p.drawLine(int(sxv), int(sy_deck) - 4, int(sxv), int(sy_hull) + 4)
             p.setPen(QColor(170, 200, 230, 230))
-            p.drawText(int(sxv) - fm.horizontalAdvance(lbl) // 2, label_y, lbl)
+            p.drawText(int(sxv) - fm.horizontalAdvance(lbl) // 2, nose_tail_y, lbl)
 
     def _draw_profile(self, p: QPainter, x_eval, r_eval, hull_eval, deck_eval) -> None:
         path = QPainterPath()
@@ -359,13 +362,16 @@ class SideViewTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-        layout.addWidget(QLabel("<b>Side View — Rocker &amp; Thickness</b>"))
+        layout.addWidget(QLabel(
+            "<b>Side View — Rocker &amp; Thickness</b>  "
+            "(drag points; double-click canvas to add; right-click point to delete)"
+        ))
 
         self._canvas = SideProfileCanvas()
         layout.addWidget(self._canvas, stretch=1)
 
         self._pos_slider = LabeledSlider("Position (ratio)", 0.0, 1.0, decimals=3)
-        self._rocker_slider = LabeledSlider("Rocker (ratio)", 0.0, 4.0, decimals=3)
+        self._rocker_slider = LabeledSlider("Rocker (ratio)", 0.0, 1.0, decimals=3)
 
         # Thickness mode row
         mode_row = QHBoxLayout()
@@ -477,7 +483,7 @@ class SideViewTab(QWidget):
         if mode == "ratio":
             param_t = self._model.parameters.thickness_mm
             self._thick_slider.set_label("Thickness (ratio)")
-            self._thick_slider.set_range(0.0, 3.0)
+            self._thick_slider.set_range(0.0, 1.0)
             self._thick_slider.set_value(pt[2] / param_t if param_t > 0 else 1.0)
         else:
             self._thick_slider.set_label("Thickness (mm)")
@@ -555,7 +561,7 @@ class SideViewTab(QWidget):
         param_t = self._model.parameters.thickness_mm
         if mode == "ratio":
             self._thick_slider.set_label("Thickness (ratio)")
-            self._thick_slider.set_range(0.0, 3.0)
+            self._thick_slider.set_range(0.0, 1.0)
             self._thick_slider.set_value(old[2] / param_t if param_t > 0 else 1.0)
         else:
             self._thick_slider.set_label("Thickness (mm)")

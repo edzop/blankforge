@@ -156,20 +156,47 @@ class RailProfileEvaluator:
             pts.append((y, z))
 
         # Segment 3: Hull.
-        # If arc ends above hull plane (z>0), drop vertically to hull then go horizontal.
-        # This preserves full board thickness regardless of softness/apex settings.
+        # When the arc ends above the hull plane, extend in the arc's tangent
+        # direction (so the side line is C1-continuous with the arc — no kink),
+        # then run flat across to the centerline.
         n_hull = n_points // 4
         if arc_end_z > 0.5:
+            # Tangent direction at arc end, in the travel direction of the outline.
+            # Arc tangent magnitude: (sin(end_angle), -cos(end_angle))
+            tx = math.sin(end_angle)
+            tz = -math.cos(end_angle)
+            # Find where tangent line crosses z = 0
+            if tz < -1e-6:
+                s_z0 = arc_end_z / (-tz)  # always positive
+                y_at_hull = arc_end_y + tx * s_z0
+                z_at_hull = 0.0
+            else:
+                # Tangent is horizontal — fall back to straight drop
+                y_at_hull = arc_end_y
+                z_at_hull = 0.0
+            # Don't let the tangent extension cross the centerline
+            if y_at_hull < 0.0:
+                if abs(tx) > 1e-6:
+                    s_y0 = -arc_end_y / tx
+                    y_at_hull = 0.0
+                    z_at_hull = max(0.0, arc_end_z + tz * s_y0)
+                else:
+                    y_at_hull = 0.0
+
             n_drop = max(2, n_hull // 2)
             for i in range(1, n_drop + 1):
                 u = i / n_drop
-                pts.append((arc_end_y, arc_end_z * (1.0 - u)))
+                y = arc_end_y + (y_at_hull - arc_end_y) * u
+                z = arc_end_z + (z_at_hull - arc_end_z) * u
+                pts.append((y, z))
+            hull_y_start = y_at_hull
             n_flat = max(2, n_hull - n_drop)
         else:
+            hull_y_start = arc_end_y
             n_flat = n_hull
         for i in range(1, n_flat + 1):
             u = i / n_flat
-            y = arc_end_y * (1.0 - u)
+            y = hull_y_start * (1.0 - u)
             z = max(0.0, -profile.lower_concave * t * 0.15 * math.sin(u * math.pi))
             pts.append((y, z))
 
