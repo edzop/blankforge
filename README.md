@@ -53,6 +53,19 @@ sudo apt install -y \
 python3 main.py
 ```
 
+> **Note — PyOpenGL (`python3-opengl` / `PyOpenGL`)** is required for the 3D render view.
+> The apt package above installs it for the system Python, but if you are running inside
+> a virtual environment or a pyenv/conda Python it will not be visible there.
+> In that case install it with pip instead:
+>
+> ```bash
+> python3 -m pip install PyOpenGL
+> # or, on an externally-managed system:
+> python3 -m pip install --break-system-packages PyOpenGL
+> ```
+>
+> Without PyOpenGL the app launches but the Rendered View and Quad View stay black.
+
 Optional: install Blender separately to enable the Blender render path from the Rendered View sidebar.
 
 ---

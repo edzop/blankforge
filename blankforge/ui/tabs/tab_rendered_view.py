@@ -73,12 +73,13 @@ def _build_wireframe_lines(
 
     if show_cross and len(rings) >= 2:
         for i in range(len(rings) - 1):
-            n = len(rings[i])
+            n      = len(rings[i])
+            n_next = len(rings[i + 1])
             for j in range(n):
                 pairs.append(rings[i][j])
-                pairs.append(rings[i + 1][(j + 1) % n])
+                pairs.append(rings[i + 1][(j + 1) % n_next])
                 pairs.append(rings[i][j])
-                pairs.append(rings[i + 1][(j - 1) % n])
+                pairs.append(rings[i + 1][(j - 1) % n_next])
 
     return np.array(pairs, dtype=np.float32) if pairs else np.zeros((0, 3), dtype=np.float32)
 

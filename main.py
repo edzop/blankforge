@@ -5,9 +5,15 @@ from pathlib import Path
 
 
 def main() -> None:
-    from PySide6.QtGui import QIcon
+    from PySide6.QtGui import QIcon, QSurfaceFormat
     from PySide6.QtWidgets import QApplication
     from blankforge.ui.main_window import BlankForgeWindow
+
+    fmt = QSurfaceFormat()
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+    fmt.setDepthBufferSize(24)
+    QSurfaceFormat.setDefaultFormat(fmt)
 
     app = QApplication(sys.argv)
     app.setApplicationName("BlankForge")

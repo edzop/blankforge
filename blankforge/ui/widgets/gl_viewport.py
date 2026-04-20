@@ -12,6 +12,12 @@ from blankforge.geometry.board import BoardMesh
 from blankforge.renderer.opengl import CameraState, OpenGLBoardRenderer
 
 
+# Sentinel: distinguishes "no pending update" from "pending update to None"
+class _Unset:
+    pass
+_UNSET = _Unset()
+
+
 class _GizmoOverlay(QWidget):
     """Transparent overlay widget that draws the XYZ orientation gizmo."""
 
@@ -129,15 +135,66 @@ class GLViewport(QOpenGLWidget):
         self._mesh: BoardMesh | None = None
         self.setMinimumSize(300, 200)
 
+        # Pending GPU state — flushed at the top of paintGL / initializeGL
+        # so all GL calls happen inside Qt-managed callbacks where the
+        # context is guaranteed current. Never call makeCurrent() manually.
+        self._pending_mesh: BoardMesh | None = None
+        self._pending_wireframe_bg: bool | _Unset = _UNSET
+        self._pending_wireframe_lines: np.ndarray | None | _Unset = _UNSET
+        self._pending_vertex_colors: np.ndarray | None | _Unset = _UNSET
+
         self._gizmo = _GizmoOverlay(self)
         self._gizmo.set_camera(self._camera)
         self._gizmo.raise_()
         self._controls: QWidget | None = None
 
+    # ------------------------------------------------------------------
+    # Qt GL callbacks — context is current inside all three of these
+    # ------------------------------------------------------------------
+
     def initializeGL(self) -> None:
         self._renderer.initialize_gl()
-        if self._mesh is not None:
-            self._renderer.update_mesh(self._mesh)
+        self._flush_pending()
+
+    def resizeGL(self, w: int, h: int) -> None:
+        from blankforge.renderer.opengl import _import_gl
+        gl = _import_gl()
+        if gl:
+            gl.glViewport(0, 0, w, h)
+        self._reposition_overlays(w)
+
+    def paintGL(self) -> None:
+        self._flush_pending()
+        self._renderer.paint(self.width(), self.height(), self._camera)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _flush_pending(self) -> None:
+        """Apply all queued GPU uploads. Must only be called from initializeGL or paintGL."""
+        if self._pending_mesh is not None:
+            self._renderer.update_mesh(self._pending_mesh)
+            self._pending_mesh = None
+        if not isinstance(self._pending_wireframe_bg, _Unset):
+            self._renderer.set_wireframe_background(self._pending_wireframe_bg)
+            self._pending_wireframe_bg = _UNSET
+        if not isinstance(self._pending_wireframe_lines, _Unset):
+            self._renderer.update_wireframe_lines(self._pending_wireframe_lines)
+            self._pending_wireframe_lines = _UNSET
+        if not isinstance(self._pending_vertex_colors, _Unset):
+            self._renderer.update_vertex_colors(self._pending_vertex_colors)
+            self._pending_vertex_colors = _UNSET
+
+    def _refresh(self) -> None:
+        self._gizmo.set_camera(self._camera)
+        self.update()
+
+    def _aspect(self) -> float:
+        w, h = self.width(), self.height()
+        if w < 10 or h < 10:
+            return 1.5  # widget not yet laid out; use a safe default
+        return w / h
 
     def set_controls_widget(self, widget: QWidget) -> None:
         self._controls = widget
@@ -154,15 +211,9 @@ class GLViewport(QOpenGLWidget):
             cw = self._controls.width()
             self._controls.move(w - cw - margin, margin + self._gizmo.height() + margin)
 
-    def resizeGL(self, w: int, h: int) -> None:
-        from blankforge.renderer.opengl import _import_gl
-        gl = _import_gl()
-        if gl:
-            gl.glViewport(0, 0, w, h)
-        self._reposition_overlays(w)
-
-    def paintGL(self) -> None:
-        self._renderer.paint(self.width(), self.height(), self._camera)
+    # ------------------------------------------------------------------
+    # Public API — queue state, never touch GL directly
+    # ------------------------------------------------------------------
 
     def update_mesh(self, mesh: BoardMesh) -> None:
         # Only auto-frame the camera the first time a mesh is set.
@@ -173,21 +224,11 @@ class GLViewport(QOpenGLWidget):
         if is_first:
             L = float(mesh.vertices[:, 0].max()) if len(mesh.vertices) > 0 else 2000.0
             self._camera.reset_for_board(L, self._aspect())
-        if self.isValid():
-            self.makeCurrent()
-            self._renderer.update_mesh(mesh)
-            self.doneCurrent()
+        self._pending_mesh = mesh
         self._refresh()
-
-    def _refresh(self) -> None:
-        self._gizmo.set_camera(self._camera)
-        self.update()
 
     def camera(self) -> CameraState:
         return self._camera
-
-    def _aspect(self) -> float:
-        return self.width() / max(self.height(), 1)
 
     def reset_view(self) -> None:
         if self._mesh is not None:
@@ -213,31 +254,23 @@ class GLViewport(QOpenGLWidget):
         self._refresh()
 
     def set_wireframe(self, enabled: bool) -> None:
-        if self.isValid():
-            self.makeCurrent()
-            self._renderer.set_wireframe_background(enabled)
-            self.doneCurrent()
+        self._pending_wireframe_bg = enabled
         self.update()
 
     def update_wireframe_lines(self, verts: np.ndarray | None) -> None:
-        if not self.isValid():
-            return
-        self.makeCurrent()
-        self._renderer.update_wireframe_lines(verts)
-        self.doneCurrent()
+        self._pending_wireframe_lines = verts
         self.update()
 
     def set_heatmap(self, enabled: bool, sensitivity: float = 1.0) -> None:
-        if not self.isValid():
-            return
-        self.makeCurrent()
         if enabled and self._mesh is not None:
-            colors = _compute_curvature_colors(self._mesh, sensitivity)
-            self._renderer.update_vertex_colors(colors)
+            self._pending_vertex_colors = _compute_curvature_colors(self._mesh, sensitivity)
         else:
-            self._renderer.update_vertex_colors(None)
-        self.doneCurrent()
+            self._pending_vertex_colors = None
         self.update()
+
+    # ------------------------------------------------------------------
+    # Mouse / wheel interaction
+    # ------------------------------------------------------------------
 
     def mousePressEvent(self, event) -> None:
         self._last_mouse = event.pos()
@@ -261,7 +294,6 @@ class GLViewport(QOpenGLWidget):
             self._camera.azimuth -= dx * 0.5
             self._camera.elevation = max(-89, min(89, self._camera.elevation + dy * 0.3))
         elif self._drag_mode == "pan":
-            import math
             az = math.radians(self._camera.azimuth)
             el = math.radians(self._camera.elevation)
             right = np.array([math.cos(az), -math.sin(az), 0], dtype=np.float32)
