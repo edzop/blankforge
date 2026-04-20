@@ -19,6 +19,7 @@ from blankforge.ui.tabs.tab_quad_view import QuadViewTab
 from blankforge.ui.tabs.tab_rendered_view import RenderedViewTab
 from blankforge.ui.tabs.tab_side_view import SideViewTab
 from blankforge.ui.tabs.tab_statistics import StatisticsTab
+from blankforge.ui.tabs.tab_fins import FinsTab
 from blankforge.ui.tabs.tab_template import NewBoardDialog
 from blankforge.ui.tabs.tab_top_view import TopViewTab
 
@@ -102,11 +103,13 @@ class BlankForgeWindow(QMainWindow):
         self._tab_quad = QuadViewTab(self.model, self.model_changed)
         self._tab_stats = StatisticsTab(self.model, self.model_changed)
         self._tab_export = ExportTab(self.model, self.model_changed)
+        self._tab_fins = FinsTab(self.model, self.model_changed)
 
         self._tabs.addTab(self._tab_parameters, "Parameters")
         self._tabs.addTab(self._tab_top, "Top View")
         self._tabs.addTab(self._tab_side, "Side View")
         self._tabs.addTab(self._tab_profile, "Rails")
+        self._tabs.addTab(self._tab_fins, "Fins")
         self._tabs.addTab(self._tab_rendered, "Rendered View")
         self._tabs.addTab(self._tab_quad, "Quad View")
         self._tabs.addTab(self._tab_stats, "Statistics")
@@ -149,6 +152,7 @@ class BlankForgeWindow(QMainWindow):
         self._tab_side.refresh_from_model()
         self._tab_profile.refresh_from_model()
         self._tab_quad.refresh_from_model()
+        self._tab_fins.refresh_from_model()
         self._trigger_geometry_build()
 
     def _trigger_geometry_build(self) -> None:

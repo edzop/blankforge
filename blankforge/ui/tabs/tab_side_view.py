@@ -17,7 +17,8 @@ from blankforge.ui.widgets.value_sliders import LabeledSlider
 HIT_RADIUS_PX = 8
 MIN_POINTS = 2
 
-# 4-tuple type: (pos_mm, centroid_mm, full_thickness_mm, thickness_mode)
+# 4-tuple type: (pos_mm, hull_rocker_mm, full_thickness_mm, thickness_mode)
+# hull_rocker = Z of the board's bottom surface at this station
 # thickness_mode is "fixed" or "ratio"
 _Pt = tuple[float, float, float, str]
 
@@ -48,7 +49,7 @@ class SideProfileCanvas(QWidget):
     point_selected = Signal(int)
     point_changed = Signal()
     drag_finished = Signal()
-    point_added = Signal(float, float, float)   # pos_mm, centroid_mm, full_thickness_mm
+    point_added = Signal(float, float, float)   # pos_mm, hull_rocker_mm, full_thickness_mm
     point_deleted = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -87,7 +88,7 @@ class SideProfileCanvas(QWidget):
         W = max(1.0, self.width() - ml - mr)
         H = max(1.0, self.height() - mt - mb)
         sx_fit = W / max(self._board_length, 1.0)
-        tops = [pt[1] + pt[2] / 2 for pt in self._pts] if self._pts else [80.0]
+        tops = [pt[1] + pt[2] for pt in self._pts] if self._pts else [80.0]
         y_range = max(max(tops) * 1.15, 1.0)
         sy_fit = H / y_range
         scale = min(sx_fit, sy_fit)  # whichever axis constrains, both share it
@@ -100,7 +101,7 @@ class SideProfileCanvas(QWidget):
         # Center the (typically thin) board profile vertically in the canvas
         ml, mt, mr, mb = self._margins()
         scale, _ = self._scales()
-        tops = [pt[1] + pt[2] / 2 for pt in self._pts] if self._pts else [80.0]
+        tops = [pt[1] + pt[2] for pt in self._pts] if self._pts else [80.0]
         content_h = max(tops) * scale * 1.15
         available = self.height() - mt - mb
         top_pad = max(0.0, (available - content_h) / 2)
@@ -147,15 +148,15 @@ class SideProfileCanvas(QWidget):
             return
 
         xs = [pt[0] for pt in self._pts]
-        centroids = [pt[1] for pt in self._pts]
+        hull_rockers = [pt[1] for pt in self._pts]
         thicks = [pt[2] for pt in self._pts]
 
         n = max(120, len(self._pts) * 25)
         x_eval = np.linspace(xs[0], xs[-1], n)
-        r_eval = _interp(xs, centroids, x_eval)
+        r_eval = _interp(xs, hull_rockers, x_eval)
         t_eval = _interp(xs, thicks, x_eval)
-        hull_eval = r_eval - t_eval / 2.0
-        deck_eval = r_eval + t_eval / 2.0
+        hull_eval = r_eval
+        deck_eval = r_eval + t_eval
 
         self._draw_grid(p, hull_eval, deck_eval, x_eval)
         self._draw_profile(p, x_eval, r_eval, hull_eval, deck_eval)
@@ -371,7 +372,7 @@ class SideViewTab(QWidget):
         layout.addWidget(self._canvas, stretch=1)
 
         self._pos_slider = LabeledSlider("Position (ratio)", 0.0, 1.0, decimals=3)
-        self._rocker_slider = LabeledSlider("Rocker (ratio)", 0.0, 1.0, decimals=3)
+        self._rocker_slider = LabeledSlider("Rocker (mm)", 0.0, 200.0, decimals=1)
 
         # Thickness mode row
         mode_row = QHBoxLayout()
@@ -406,11 +407,11 @@ class SideViewTab(QWidget):
     # ------------------------------------------------------------------
 
     def _merged_from_model(self) -> list[_Pt]:
-        """Returns (pos, centroid_mm, full_thickness_mm, mode). Model stores hull rocker + half_thickness."""
+        """Returns (pos, hull_rocker_mm, full_thickness_mm, mode). Model stores hull rocker directly."""
         rocker_pts = self._model.curves.rocker.sorted_points()
         if not rocker_pts:
             L = self._model.parameters.length_mm
-            return [(0.0, 46.0, 32.0, "fixed"), (L * 0.5, 33.0, 60.0, "fixed"), (L, 35.0, 30.0, "fixed")]
+            return [(0.0, 30.0, 32.0, "fixed"), (L * 0.5, 3.0, 60.0, "fixed"), (L, 20.0, 30.0, "fixed")]
 
         param_t = self._model.parameters.thickness_mm
         thick_by_pos = {cp.position_mm: cp for cp in self._model.curves.thickness.sorted_points()}
@@ -432,14 +433,15 @@ class SideViewTab(QWidget):
                     half_t = thick_cp.value_mm * param_t / 2.0
                 else:
                     half_t = thick_cp.value_mm
-            result.append((pt.position_mm, pt.value_mm + half_t, half_t * 2.0, mode))
+            # pt.value_mm IS hull_rocker (bottom surface Z); store directly
+            result.append((pt.position_mm, pt.value_mm, half_t * 2.0, mode))
         return result
 
     def _write_to_model(self, pts: list[_Pt]) -> None:
-        """pts = (pos, centroid, full_thickness, mode). Model needs hull rocker + half_thickness."""
+        """pts = (pos, hull_rocker_mm, full_thickness, mode). Model stores hull_rocker directly."""
         param_t = self._model.parameters.thickness_mm
         self._model.curves.rocker.points = [
-            ControlPoint(position_mm=p[0], value_mm=p[1] - p[2] / 2.0)
+            ControlPoint(position_mm=p[0], value_mm=p[1])
             for p in pts
         ]
         thick_points = []
@@ -471,7 +473,6 @@ class SideViewTab(QWidget):
     def _load_sliders(self, pt: _Pt) -> None:
         self._updating = True
         L = self._model.parameters.length_mm
-        R = max(self._model.parameters.rocker_mm, 1.0)
         mode = pt[3] if len(pt) > 3 else "fixed"
 
         # Position — disabled for nose/tail
@@ -479,7 +480,8 @@ class SideViewTab(QWidget):
         self._pos_slider.set_value(pt[0] / L)
         self._pos_slider.setEnabled(not is_endpoint)
 
-        self._rocker_slider.set_value(pt[1] / R)
+        # Rocker in absolute mm — independent of thickness parameter
+        self._rocker_slider.set_value(pt[1])
 
         # Thickness — mode-dependent
         self._thick_mode.setCurrentIndex(0 if mode == "fixed" else 1)
@@ -510,10 +512,9 @@ class SideViewTab(QWidget):
         if 0 <= idx < len(pts):
             self._updating = True
             L = self._model.parameters.length_mm
-            R = max(self._model.parameters.rocker_mm, 1.0)
             p = pts[idx]
             self._pos_slider.set_value(p[0] / L)
-            self._rocker_slider.set_value(p[1] / R)
+            self._rocker_slider.set_value(p[1])
             self._updating = False
         self._write_to_model(pts)
         _sync_rail_stations(self._model)
@@ -585,7 +586,6 @@ class SideViewTab(QWidget):
             return
 
         L = self._model.parameters.length_mm
-        R = max(self._model.parameters.rocker_mm, 1.0)
         param_t = self._model.parameters.thickness_mm
         mode = pts[idx][3] if len(pts[idx]) > 3 else "fixed"
 
@@ -595,22 +595,15 @@ class SideViewTab(QWidget):
         else:
             new_pos = max(0.0, min(L, self._pos_slider.value() * L))
 
-        new_rocker_centroid = self._rocker_slider.value() * R
+        # Rocker slider is absolute mm — independent of thickness
+        new_hull_rocker = max(0.0, self._rocker_slider.value())
+
         if mode == "ratio":
             new_full_t = self._thick_slider.value() * param_t
         else:
             new_full_t = self._thick_slider.value()
 
-        new_centroid = new_rocker_centroid + new_full_t / 2.0 - pts[idx][2] / 2.0
-        # centroid = hull_rocker + half_thickness; preserve hull rocker when possible
-        hull_rocker = pts[idx][1] - pts[idx][2] / 2.0
-        new_centroid = hull_rocker + new_full_t / 2.0
-
-        # For position change, keep hull rocker from slider
-        hull_rocker_from_slider = self._rocker_slider.value() * R - pts[idx][2] / 2.0
-        new_centroid = hull_rocker_from_slider + new_full_t / 2.0
-
-        pts[idx] = (new_pos, new_centroid, new_full_t, mode)
+        pts[idx] = (new_pos, new_hull_rocker, new_full_t, mode)
         pts.sort(key=lambda p: p[0])
         self._canvas.set_data(pts, L)
         self._canvas._selected_pos = new_pos

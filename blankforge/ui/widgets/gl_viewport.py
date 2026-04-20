@@ -139,9 +139,11 @@ class GLViewport(QOpenGLWidget):
         # so all GL calls happen inside Qt-managed callbacks where the
         # context is guaranteed current. Never call makeCurrent() manually.
         self._pending_mesh: BoardMesh | None = None
-        self._pending_wireframe_bg: bool | _Unset = _UNSET
         self._pending_wireframe_lines: np.ndarray | None | _Unset = _UNSET
         self._pending_vertex_colors: np.ndarray | None | _Unset = _UNSET
+        self._pending_solid_alpha: float | _Unset = _UNSET
+        self._pending_heatmap_blend: float | _Unset = _UNSET
+        self._pending_line_alpha: float | _Unset = _UNSET
 
         self._gizmo = _GizmoOverlay(self)
         self._gizmo.set_camera(self._camera)
@@ -176,15 +178,21 @@ class GLViewport(QOpenGLWidget):
         if self._pending_mesh is not None:
             self._renderer.update_mesh(self._pending_mesh)
             self._pending_mesh = None
-        if not isinstance(self._pending_wireframe_bg, _Unset):
-            self._renderer.set_wireframe_background(self._pending_wireframe_bg)
-            self._pending_wireframe_bg = _UNSET
         if not isinstance(self._pending_wireframe_lines, _Unset):
             self._renderer.update_wireframe_lines(self._pending_wireframe_lines)
             self._pending_wireframe_lines = _UNSET
         if not isinstance(self._pending_vertex_colors, _Unset):
             self._renderer.update_vertex_colors(self._pending_vertex_colors)
             self._pending_vertex_colors = _UNSET
+        if not isinstance(self._pending_solid_alpha, _Unset):
+            self._renderer.set_solid_alpha(self._pending_solid_alpha)
+            self._pending_solid_alpha = _UNSET
+        if not isinstance(self._pending_heatmap_blend, _Unset):
+            self._renderer.set_heatmap_blend(self._pending_heatmap_blend)
+            self._pending_heatmap_blend = _UNSET
+        if not isinstance(self._pending_line_alpha, _Unset):
+            self._renderer.set_line_alpha(self._pending_line_alpha)
+            self._pending_line_alpha = _UNSET
 
     def _refresh(self) -> None:
         self._gizmo.set_camera(self._camera)
@@ -253,19 +261,22 @@ class GLViewport(QOpenGLWidget):
             self._camera.fit_board(L, self._aspect())
         self._refresh()
 
-    def set_wireframe(self, enabled: bool) -> None:
-        self._pending_wireframe_bg = enabled
+    def set_solid_alpha(self, alpha: float) -> None:
+        self._pending_solid_alpha = alpha
+        self.update()
+
+    def set_line_alpha(self, alpha: float) -> None:
+        self._pending_line_alpha = alpha
+        self.update()
+
+    def set_heatmap_blend(self, blend: float, sensitivity: float = 1.0) -> None:
+        self._pending_heatmap_blend = blend
+        if blend > 0.0 and self._mesh is not None:
+            self._pending_vertex_colors = _compute_curvature_colors(self._mesh, sensitivity)
         self.update()
 
     def update_wireframe_lines(self, verts: np.ndarray | None) -> None:
         self._pending_wireframe_lines = verts
-        self.update()
-
-    def set_heatmap(self, enabled: bool, sensitivity: float = 1.0) -> None:
-        if enabled and self._mesh is not None:
-            self._pending_vertex_colors = _compute_curvature_colors(self._mesh, sensitivity)
-        else:
-            self._pending_vertex_colors = None
         self.update()
 
     # ------------------------------------------------------------------

@@ -50,6 +50,70 @@ void main() {
 }
 """
 
+# Separate line shader — vertex + geometry + fragment.
+# The geometry shader expands each line segment into a screen-space quad
+# so lines have a consistent pixel width regardless of depth.
+LINE_VERTEX_SHADER = """
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 2) in vec3 aColor;
+
+uniform mat4 uMVP;
+out vec3 vColor;
+
+void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    vColor = aColor;
+}
+"""
+
+LINE_GEOMETRY_SHADER = """
+#version 330 core
+layout(lines) in;
+layout(triangle_strip, max_vertices = 4) out;
+
+uniform vec2 uViewport;
+uniform float uLineWidth;
+
+in vec3 vColor[];
+out vec3 gColor;
+
+void main() {
+    vec4 p0 = gl_in[0].gl_Position;
+    vec4 p1 = gl_in[1].gl_Position;
+
+    // NDC coordinates of each endpoint
+    vec2 ndc0 = p0.xy / p0.w;
+    vec2 ndc1 = p1.xy / p1.w;
+
+    // Screen-space direction — skip degenerate segments (nose/tail tip,
+    // or two identical points) to avoid NaN from normalize(zero).
+    vec2 delta = (ndc1 - ndc0) * uViewport;
+    if (dot(delta, delta) < 0.0001) return;
+
+    vec2 dir  = normalize(delta);
+    vec2 perp = vec2(-dir.y, dir.x) * uLineWidth / uViewport;
+
+    gColor = vColor[0];
+    gl_Position = vec4(p0.xy + perp * p0.w, p0.zw); EmitVertex();
+    gl_Position = vec4(p0.xy - perp * p0.w, p0.zw); EmitVertex();
+    gColor = vColor[1];
+    gl_Position = vec4(p1.xy + perp * p1.w, p1.zw); EmitVertex();
+    gl_Position = vec4(p1.xy - perp * p1.w, p1.zw); EmitVertex();
+    EndPrimitive();
+}
+"""
+
+LINE_FRAGMENT_SHADER = """
+#version 330 core
+in vec3 gColor;
+uniform float uLineAlpha;
+out vec4 FragColor;
+void main() {
+    FragColor = vec4(gColor, uLineAlpha);
+}
+"""
+
 FRAGMENT_SHADER = """
 #version 330 core
 in vec3 vNormal;
@@ -58,8 +122,8 @@ in vec3 vVertexColor;
 
 uniform vec3 uCameraPos;
 uniform vec3 uSurfaceColor;
-uniform bool uUseVertexColor;
-uniform bool uFlatColor;
+uniform float uHeatmapBlend;  // 0 = surface colour only, 1 = full heatmap
+uniform float uAlpha;         // overall mesh opacity
 
 // 3-point lighting
 uniform vec3 uKeyDir;
@@ -88,12 +152,8 @@ vec3 light_contrib(vec3 N, vec3 V, vec3 L, vec3 lcolor, float strength,
 void main() {
     vec3 N = normalize(vNormal);
     vec3 V = normalize(uCameraPos - vFragPos);
-    if (uFlatColor) {
-        FragColor = vec4(uSurfaceColor, 1.0);
-        return;
-    }
 
-    vec3 surf = uUseVertexColor ? vVertexColor : uSurfaceColor;
+    vec3 surf = mix(uSurfaceColor, vVertexColor, uHeatmapBlend);
 
     vec3 ambient = surf * vec3(0.03, 0.04, 0.07);
     vec3 key  = light_contrib(N, V, uKeyDir,  uKeyColor,  uKeyStrength,  surf, 1.0, 128.0, 0.65);
@@ -103,7 +163,7 @@ void main() {
     vec3 result = ambient + key + fill + rim;
     result = result / (result + vec3(0.70));
     result = pow(clamp(result, 0.0, 1.0), vec3(1.0 / 2.2));
-    FragColor = vec4(result, 1.0);
+    FragColor = vec4(result, uAlpha);
 }
 """
 
@@ -171,10 +231,14 @@ class OpenGLBoardRenderer(AbstractRenderer):
         self._vbo_lines = None
         self._n_line_verts = 0
         self._shader_program = None
+        self._line_shader_program = None
+        self._line_width_px = 1.8  # screen-space pixel width for wireframe lines
         self._n_indices = 0
         self._n_verts = 0
-        self._use_vertex_colors = False
-        self._wireframe_bg = False
+        # Blendable layer intensities
+        self._solid_alpha: float = 1.0      # mesh opacity  0-1
+        self._heatmap_blend: float = 0.0    # heatmap mix   0-1
+        self._line_alpha: float = 0.0       # wireframe opacity 0-1
         self._initialized = False
 
     def name(self) -> str:
@@ -188,6 +252,10 @@ class OpenGLBoardRenderer(AbstractRenderer):
         if gl is None:
             return
         self._shader_program = _compile_program(gl, VERTEX_SHADER, FRAGMENT_SHADER)
+        self._line_shader_program = _compile_program(
+            gl, LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER,
+            geom_src=LINE_GEOMETRY_SHADER,
+        )
         self._vao = gl.glGenVertexArrays(1)
         self._vbo_verts = gl.glGenBuffers(1)
         self._vbo_norms = gl.glGenBuffers(1)
@@ -258,21 +326,25 @@ class OpenGLBoardRenderer(AbstractRenderer):
         gl.glBindVertexArray(0)
         self._n_line_verts = len(verts)
 
-    def set_wireframe_background(self, enabled: bool) -> None:
-        self._wireframe_bg = enabled
+    def set_solid_alpha(self, alpha: float) -> None:
+        self._solid_alpha = float(alpha)
+
+    def set_heatmap_blend(self, blend: float) -> None:
+        self._heatmap_blend = float(blend)
+
+    def set_line_alpha(self, alpha: float) -> None:
+        self._line_alpha = float(alpha)
 
     def update_vertex_colors(self, colors: np.ndarray | None) -> None:
         gl = _import_gl()
         if gl is None or not self._initialized:
             return
         if colors is None:
-            self._use_vertex_colors = False
             return
         gl.glBindVertexArray(self._vao)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._vbo_colors)
         gl.glBufferData(gl.GL_ARRAY_BUFFER, colors.nbytes, colors.astype(np.float32), gl.GL_DYNAMIC_DRAW)
         gl.glBindVertexArray(0)
-        self._use_vertex_colors = True
 
     def paint(self, width: int, height: int, camera: CameraState) -> None:
         if not self._initialized or self._n_indices == 0:
@@ -285,8 +357,6 @@ class OpenGLBoardRenderer(AbstractRenderer):
         gl.glClearColor(0.12, 0.12, 0.15, 1.0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
-        gl.glUseProgram(self._shader_program)
-
         aspect = width / max(height, 1)
         proj = camera.projection_matrix(aspect)
         view = camera.view_matrix()
@@ -294,54 +364,62 @@ class OpenGLBoardRenderer(AbstractRenderer):
         mvp = proj @ view @ model
         normal_mat = np.linalg.inv(model[:3, :3]).T.astype(np.float32)
 
-        _set_uniform_mat4(gl, self._shader_program, "uMVP", mvp)
-        _set_uniform_mat4(gl, self._shader_program, "uModel", model)
-        _set_uniform_mat3(gl, self._shader_program, "uNormalMatrix", normal_mat)
-        _set_uniform_vec3(gl, self._shader_program, "uCameraPos", camera.eye_position())
-        _set_uniform_vec3(gl, self._shader_program, "uSurfaceColor", np.array([0.86, 0.83, 0.76], dtype=np.float32))
-        _set_uniform_bool(gl, self._shader_program, "uUseVertexColor", self._use_vertex_colors)
-
-        # Key light — warm golden-white, upper-front-left (sun equivalent)
-        _set_uniform_vec3(gl, self._shader_program, "uKeyDir",
-                          _norm(np.array([-0.50, -0.60, 0.90], dtype=np.float32)))
-        _set_uniform_vec3(gl, self._shader_program, "uKeyColor",
-                          np.array([1.00, 0.92, 0.72], dtype=np.float32))
-        _set_uniform_float(gl, self._shader_program, "uKeyStrength", 1.1)
-
-        # Fill light — desaturated cool sky, weak (let shadows go dark for depth)
-        _set_uniform_vec3(gl, self._shader_program, "uFillDir",
-                          _norm(np.array([0.75, 0.35, 0.30], dtype=np.float32)))
-        _set_uniform_vec3(gl, self._shader_program, "uFillColor",
-                          np.array([0.45, 0.58, 0.82], dtype=np.float32))
-        _set_uniform_float(gl, self._shader_program, "uFillStrength", 0.22)
-
-        # Rim light — cold blue-violet from behind, separates board from background
-        _set_uniform_vec3(gl, self._shader_program, "uRimDir",
-                          _norm(np.array([0.20, 0.90, -0.35], dtype=np.float32)))
-        _set_uniform_vec3(gl, self._shader_program, "uRimColor",
-                          np.array([0.60, 0.75, 1.00], dtype=np.float32))
-        _set_uniform_float(gl, self._shader_program, "uRimStrength", 0.50)
-
-        if self._wireframe_bg:
-            # Dark flat silhouette — custom lines stand out clearly on top
-            _set_uniform_bool(gl, self._shader_program, "uFlatColor", True)
+        # --- Draw mesh ---
+        if self._solid_alpha > 0.0:
+            gl.glUseProgram(self._shader_program)
+            _set_uniform_mat4(gl, self._shader_program, "uMVP", mvp)
+            _set_uniform_mat4(gl, self._shader_program, "uModel", model)
+            _set_uniform_mat3(gl, self._shader_program, "uNormalMatrix", normal_mat)
+            _set_uniform_vec3(gl, self._shader_program, "uCameraPos", camera.eye_position())
             _set_uniform_vec3(gl, self._shader_program, "uSurfaceColor",
-                              np.array([0.08, 0.09, 0.12], dtype=np.float32))
-        else:
-            _set_uniform_bool(gl, self._shader_program, "uFlatColor", False)
-        gl.glBindVertexArray(self._vao)
-        gl.glDrawElements(gl.GL_TRIANGLES, self._n_indices, gl.GL_UNSIGNED_INT, None)
-        gl.glBindVertexArray(0)
+                              np.array([0.86, 0.83, 0.76], dtype=np.float32))
+            _set_uniform_float(gl, self._shader_program, "uHeatmapBlend", self._heatmap_blend)
+            _set_uniform_float(gl, self._shader_program, "uAlpha", self._solid_alpha)
 
-        if self._n_line_verts > 0:
-            _set_uniform_bool(gl, self._shader_program, "uFlatColor", True)
-            _set_uniform_vec3(gl, self._shader_program, "uSurfaceColor",
-                              np.array([0.7, 0.8, 1.0], dtype=np.float32))
-            gl.glLineWidth(1.2)
+            _set_uniform_vec3(gl, self._shader_program, "uKeyDir",
+                              _norm(np.array([-0.50, -0.60, 0.90], dtype=np.float32)))
+            _set_uniform_vec3(gl, self._shader_program, "uKeyColor",
+                              np.array([1.00, 0.92, 0.72], dtype=np.float32))
+            _set_uniform_float(gl, self._shader_program, "uKeyStrength", 1.1)
+            _set_uniform_vec3(gl, self._shader_program, "uFillDir",
+                              _norm(np.array([0.75, 0.35, 0.30], dtype=np.float32)))
+            _set_uniform_vec3(gl, self._shader_program, "uFillColor",
+                              np.array([0.45, 0.58, 0.82], dtype=np.float32))
+            _set_uniform_float(gl, self._shader_program, "uFillStrength", 0.22)
+            _set_uniform_vec3(gl, self._shader_program, "uRimDir",
+                              _norm(np.array([0.20, 0.90, -0.35], dtype=np.float32)))
+            _set_uniform_vec3(gl, self._shader_program, "uRimColor",
+                              np.array([0.60, 0.75, 1.00], dtype=np.float32))
+            _set_uniform_float(gl, self._shader_program, "uRimStrength", 0.50)
+
+            transparent = self._solid_alpha < 0.999
+            if transparent:
+                gl.glEnable(gl.GL_BLEND)
+                gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+                gl.glDepthMask(gl.GL_FALSE)
+            gl.glBindVertexArray(self._vao)
+            gl.glDrawElements(gl.GL_TRIANGLES, self._n_indices, gl.GL_UNSIGNED_INT, None)
+            gl.glBindVertexArray(0)
+            if transparent:
+                gl.glDepthMask(gl.GL_TRUE)
+                gl.glDisable(gl.GL_BLEND)
+
+        # --- Draw wireframe lines ---
+        if self._n_line_verts > 0 and self._line_alpha > 0.0:
+            gl.glUseProgram(self._line_shader_program)
+            _set_uniform_mat4(gl, self._line_shader_program, "uMVP", mvp)
+            _set_uniform_vec2(gl, self._line_shader_program, "uViewport",
+                              np.array([width, height], dtype=np.float32))
+            _set_uniform_float(gl, self._line_shader_program, "uLineWidth", self._line_width_px)
+            _set_uniform_float(gl, self._line_shader_program, "uLineAlpha", self._line_alpha)
+            gl.glEnable(gl.GL_BLEND)
+            gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+            gl.glDisable(gl.GL_DEPTH_TEST)
             gl.glBindVertexArray(self._vao_lines)
             gl.glDrawArrays(gl.GL_LINES, 0, self._n_line_verts)
             gl.glBindVertexArray(0)
-            gl.glLineWidth(1.0)
+            gl.glEnable(gl.GL_DEPTH_TEST)
+            gl.glDisable(gl.GL_BLEND)
 
     def render(self, mesh, output_path, width=1920, height=1080, view="perspective",
                background_color=(0.15, 0.15, 0.15)) -> RendererOutput:
@@ -430,18 +508,23 @@ def _compile_shader(gl, shader_type, source):
     return shader
 
 
-def _compile_program(gl, vert_src, frag_src):
+def _compile_program(gl, vert_src, frag_src, geom_src=None):
     vert = _compile_shader(gl, gl.GL_VERTEX_SHADER, vert_src)
     frag = _compile_shader(gl, gl.GL_FRAGMENT_SHADER, frag_src)
     prog = gl.glCreateProgram()
     gl.glAttachShader(prog, vert)
     gl.glAttachShader(prog, frag)
+    if geom_src is not None:
+        geom = _compile_shader(gl, gl.GL_GEOMETRY_SHADER, geom_src)
+        gl.glAttachShader(prog, geom)
     gl.glLinkProgram(prog)
     if not gl.glGetProgramiv(prog, gl.GL_LINK_STATUS):
         log = gl.glGetProgramInfoLog(prog).decode()
         raise RuntimeError(f"Program link error: {log}")
     gl.glDeleteShader(vert)
     gl.glDeleteShader(frag)
+    if geom_src is not None:
+        gl.glDeleteShader(geom)
     return prog
 
 
@@ -455,6 +538,12 @@ def _set_uniform_mat3(gl, prog, name, mat):
     loc = gl.glGetUniformLocation(prog, name)
     if loc >= 0:
         gl.glUniformMatrix3fv(loc, 1, gl.GL_TRUE, mat.astype(np.float32))
+
+
+def _set_uniform_vec2(gl, prog, name, vec):
+    loc = gl.glGetUniformLocation(prog, name)
+    if loc >= 0:
+        gl.glUniform2fv(loc, 1, vec.astype(np.float32))
 
 
 def _set_uniform_vec3(gl, prog, name, vec):

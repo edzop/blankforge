@@ -7,6 +7,8 @@ from typing import Literal, Optional
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from blankforge.data.fin_model import FinSetup, default_fins_for_template
+
 
 class ControlPoint(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
@@ -85,6 +87,7 @@ class BoardModel(BaseModel):
     meta: BoardMeta = Field(default_factory=BoardMeta)
     parameters: BoardParameters = Field(default_factory=BoardParameters)
     curves: BoardCurves = Field(default_factory=BoardCurves)
+    fins: Optional[FinSetup] = None
 
     @classmethod
     def from_template(cls, template: str) -> "BoardModel":
@@ -116,7 +119,8 @@ class BoardModel(BaseModel):
             template = "shortboard"
 
         if template == "custom":
-            return cls(meta=BoardMeta(template="custom"), curves=_default_curves(2000, 530, 65, 40, 300, 65))
+            fins = default_fins_for_template("custom")
+            return cls(meta=BoardMeta(template="custom"), curves=_default_curves(2000, 530, 65, 40, 300, 65), fins=fins)
 
         p = presets[template]
         L = p["length_mm"]
@@ -129,7 +133,8 @@ class BoardModel(BaseModel):
         )
         curves = _build_template_curves(L, p)
         meta = BoardMeta(name=f"New {template.capitalize()}", template=template)
-        return cls(meta=meta, parameters=parameters, curves=curves)
+        fins = default_fins_for_template(template)
+        return cls(meta=meta, parameters=parameters, curves=curves, fins=fins)
 
 
 def _build_template_curves(length_mm: float, p: dict) -> BoardCurves:
