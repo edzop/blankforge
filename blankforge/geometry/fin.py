@@ -135,6 +135,8 @@ def transform_fin_to_board(fin_mesh: BoardMesh, fin: "FinDef", board_model) -> B
     Fin local frame  : X=chord (0=LE), Y=foil depth, Z=height (0=base, up=tip)
     Board world frame: X=length (0=nose→L=tail), Y=lateral, Z=vertical (up=deck)
     The fin mounts on the bottom; its tip points downward (−Z in board frame).
+    The fin is rotated around the lateral (Y) axis to align with the board
+    bottom tangent, compensating for rocker at the mounting position.
     """
     from blankforge.geometry.curves import BoardCurveEvaluator
 
@@ -142,32 +144,51 @@ def transform_fin_to_board(fin_mesh: BoardMesh, fin: "FinDef", board_model) -> B
     x_board = L - fin.placement.x_from_tail_mm
     y_board = fin.placement.y_from_center_mm
 
-    # Board bottom Z at the fin's X position ≈ rocker value at that station
     rocker_eval = BoardCurveEvaluator(board_model.curves.rocker)
     z_bottom = float(rocker_eval(x_board))
+
+    # Rocker slope at the fin mounting point via central finite difference
+    eps = 0.5  # mm
+    slope = (float(rocker_eval(x_board + eps)) - float(rocker_eval(x_board - eps))) / (2.0 * eps)
+    angle = np.arctan(slope)
+    cos_r, sin_r = float(np.cos(angle)), float(np.sin(angle))
 
     # Apply cant and toe in the fin's local frame first
     rotated = apply_cant_toe(fin_mesh,
                               fin.placement.cant_deg,
                               fin.placement.toe_deg)
 
-    verts = rotated.vertices.astype(np.float64)  # (N, 3): (chord, depth, height)
+    verts = rotated.vertices.astype(np.float64)
     norms = rotated.normals.astype(np.float64)
 
-    # Map local → board frame:
-    #   chord (X_local) → board X (fore-aft)
-    #   depth (Y_local) → board Y (lateral) with lateral offset
-    #   height (Z_local) → −board Z (fins hang below board bottom)
-    out = np.zeros_like(verts)
-    out[:, 0] = x_board + verts[:, 0]
-    out[:, 1] = y_board + verts[:, 1]
-    out[:, 2] = z_bottom - verts[:, 2]
+    # Board-frame displacements, centered at the mounting point.
+    # Local Z (height) is negated because the fin hangs below the board bottom.
+    dx = verts[:, 0]   # chord → fore-aft
+    dy = verts[:, 1]   # depth → lateral
+    dz = -verts[:, 2]  # height → -Z (downward)
 
-    # Normals: same X/Y mapping; Z flipped
+    # Ry(-angle): rotates the fin so its height axis aligns with the board
+    # bottom outward normal, accounting for rocker slope.
+    #   (0, 0, -1) maps to (sin_r, 0, -cos_r) — tilts toward tail for +slope.
+    dx_r = dx * cos_r - dz * sin_r
+    dz_r = dx * sin_r + dz * cos_r
+
+    out = np.zeros_like(verts)
+    out[:, 0] = x_board + dx_r
+    out[:, 1] = y_board + dy
+    out[:, 2] = z_bottom + dz_r
+
+    # Same rotation applied to normals (no translation needed)
+    nx = norms[:, 0]
+    ny = norms[:, 1]
+    nz = -norms[:, 2]
+    nx_r = nx * cos_r - nz * sin_r
+    nz_r = nx * sin_r + nz * cos_r
+
     out_n = np.zeros_like(norms)
-    out_n[:, 0] = norms[:, 0]
-    out_n[:, 1] = norms[:, 1]
-    out_n[:, 2] = -norms[:, 2]
+    out_n[:, 0] = nx_r
+    out_n[:, 1] = ny
+    out_n[:, 2] = nz_r
 
     return BoardMesh(vertices=out.astype(np.float32),
                      normals=out_n.astype(np.float32),
@@ -191,6 +212,156 @@ def merge_meshes(*meshes: BoardMesh) -> BoardMesh | None:
         normals=np.vstack(norms).astype(np.float32),
         triangles=np.vstack(tris).astype(np.int32),
     )
+
+
+# ---------------------------------------------------------------------------
+# Fin box plug geometry
+# ---------------------------------------------------------------------------
+
+# How deep (in mm) the plug tab extends below the fin base (into the board).
+_PLUG_DEPTH = 10.0
+
+# Screw boss protrusion below the plug's bottom face.
+_SCREW_PROTRUDE = 2.5
+_SCREW_RADIUS   = 2.2
+_SCREW_SIDES    = 10
+
+# Offset from each end of the slot to the screw-centre for two-screw boxes.
+_SCREW_INSET = 6.0
+
+
+def _box_mesh(
+    x0: float, x1: float,
+    y0: float, y1: float,
+    z0: float, z1: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Closed axis-aligned rectangular prism.  Outward-facing triangle winding."""
+    v = np.array([
+        [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],   # 0-3 bottom
+        [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],   # 4-7 top
+    ], dtype=np.float32)
+    t = np.array([
+        [0, 2, 1], [0, 3, 2],  # bottom  (-Z)
+        [4, 5, 6], [4, 6, 7],  # top     (+Z)
+        [0, 5, 4], [0, 1, 5],  # front   (-Y)
+        [2, 3, 7], [2, 7, 6],  # back    (+Y)
+        [0, 7, 3], [0, 4, 7],  # left    (-X)
+        [1, 2, 6], [1, 6, 5],  # right   (+X)
+    ], dtype=np.int32)
+    return v, t
+
+
+def _cylinder_mesh(
+    cx: float, cy: float,
+    z_bot: float, z_top: float,
+    radius: float = _SCREW_RADIUS,
+    n: int = _SCREW_SIDES,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Closed cylinder (both caps).  Outward-facing triangle winding."""
+    a = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    cos_a, sin_a = np.cos(a), np.sin(a)
+
+    # Layout: [0]         = bottom centre
+    #         [1 .. n]    = bottom ring
+    #         [n+1]       = top centre
+    #         [n+2 .. 2n+1] = top ring
+    v = np.empty((2 * n + 2, 3), dtype=np.float32)
+    v[0] = [cx, cy, z_bot]
+    v[1:n + 1, 0] = cx + cos_a * radius
+    v[1:n + 1, 1] = cy + sin_a * radius
+    v[1:n + 1, 2] = z_bot
+    v[n + 1] = [cx, cy, z_top]
+    v[n + 2:, 0] = cx + cos_a * radius
+    v[n + 2:, 1] = cy + sin_a * radius
+    v[n + 2:, 2] = z_top
+
+    tris: list[list[int]] = []
+    for i in range(n):
+        j = (i + 1) % n
+        # Bottom cap  (normal −Z)
+        tris.append([0, 1 + j, 1 + i])
+        # Top cap  (normal +Z)
+        tris.append([n + 1, n + 2 + i, n + 2 + j])
+        # Side quad
+        tris.append([1 + i, 1 + j, n + 2 + j])
+        tris.append([1 + i, n + 2 + j, n + 2 + i])
+
+    return v, np.array(tris, dtype=np.int32)
+
+
+def _compute_normals(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
+    """Area-weighted per-vertex normals for an arbitrary triangle mesh."""
+    norms = np.zeros_like(vertices)
+    v0 = vertices[triangles[:, 0]]
+    v1 = vertices[triangles[:, 1]]
+    v2 = vertices[triangles[:, 2]]
+    face_n = np.cross(v1 - v0, v2 - v0)
+    for k in range(3):
+        np.add.at(norms, triangles[:, k], face_n)
+    mag = np.linalg.norm(norms, axis=1, keepdims=True)
+    mag = np.where(mag < 1e-9, 1.0, mag)
+    return (norms / mag).astype(np.float32)
+
+
+def _build_fin_box_mesh(fin: "FinDef") -> "BoardMesh | None":
+    """Build the fin-plug geometry that inserts into the board box.
+
+    Returns None for glassed-in fins (no removable plug).
+
+    The plug extends from Z=0 (fin base / board surface) down to Z=-_PLUG_DEPTH.
+    Screw-boss cylinders protrude below the plug's bottom face to indicate
+    screw positions for each box standard.
+    """
+    box = fin.box
+    if box.box_type == "Glassed-in" or box.slot_length_mm <= 0:
+        return None
+
+    if len(fin.points) < 2:
+        return None
+
+    # Centre the plug on the fin base chord.
+    x_le = float(fin.points[0].x_mm)
+    x_te = float(fin.points[-1].x_mm)
+    chord_cx = (x_le + x_te) * 0.5
+
+    half_l = box.slot_length_mm * 0.5
+    half_w = box.slot_width_mm * 0.5
+
+    px0, px1 = chord_cx - half_l, chord_cx + half_l
+    py0, py1 = -half_w, half_w
+    pz0, pz1 = -_PLUG_DEPTH, 0.0
+
+    all_verts: list[np.ndarray] = []
+    all_tris:  list[np.ndarray] = []
+    offset = 0
+
+    # --- plug body ---
+    bv, bt = _box_mesh(px0, px1, py0, py1, pz0, pz1)
+    all_verts.append(bv)
+    all_tris.append(bt + offset)
+    offset += len(bv)
+
+    # --- screw bosses below the plug bottom face ---
+    screw_z_top = pz0
+    screw_z_bot = pz0 - _SCREW_PROTRUDE
+
+    if box.box_type in ("FCS", "FCS II"):
+        inset = min(_SCREW_INSET, half_l - _SCREW_RADIUS - 1.0)
+        for sx in (chord_cx - inset, chord_cx + inset):
+            sv, st = _cylinder_mesh(sx, 0.0, screw_z_bot, screw_z_top)
+            all_tris.append(st + offset)
+            all_verts.append(sv)
+            offset += len(sv)
+    elif box.box_type == "Futures":
+        sv, st = _cylinder_mesh(chord_cx, 0.0, screw_z_bot, screw_z_top, radius=2.8)
+        all_tris.append(st + offset)
+        all_verts.append(sv)
+
+    verts = np.vstack(all_verts).astype(np.float32)
+    tris  = np.vstack(all_tris).astype(np.int32)
+    norms = _compute_normals(verts, tris)
+
+    return BoardMesh(vertices=verts, normals=norms, triangles=tris)
 
 
 def build_fin_mesh(
@@ -379,4 +550,6 @@ def build_fin_mesh(
     lens = np.where(lens < 1e-9, 1.0, lens)
     normals = (normals / lens).astype(np.float32)
 
-    return BoardMesh(vertices=vertices, normals=normals, triangles=triangles)
+    blade = BoardMesh(vertices=vertices, normals=normals, triangles=triangles)
+    plug  = _build_fin_box_mesh(fin)
+    return merge_meshes(blade, plug) if plug is not None else blade

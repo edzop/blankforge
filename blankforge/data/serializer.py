@@ -24,16 +24,85 @@ class SurfboardSerializer:
         return BoardModel.model_validate_json(Path(path).read_text())
 
     @staticmethod
-    def export_stl(model: BoardModel, path: Path, mesh_resolution: int = 50) -> None:
-        from blankforge.geometry.board import BoardGeometryBuilder
-        mesh, _ = BoardGeometryBuilder(use_occt=False).build(model, resolution=mesh_resolution)
+    def export_stl(
+        model: BoardModel,
+        path: Path,
+        mesh_resolution: int = 50,
+        include_board: bool = True,
+        include_fin_left: bool = True,
+        include_fin_right: bool = True,
+        include_fin_center: bool = True,
+    ) -> None:
+        mesh = _build_export_mesh(
+            model, mesh_resolution,
+            include_board, include_fin_left, include_fin_right, include_fin_center,
+        )
+        if mesh is None:
+            raise ValueError("No parts selected for export.")
         _write_stl_binary(mesh.vertices, mesh.triangles, Path(path))
 
     @staticmethod
-    def export_obj(model: BoardModel, path: Path, mesh_resolution: int = 50) -> None:
-        from blankforge.geometry.board import BoardGeometryBuilder
-        mesh, _ = BoardGeometryBuilder(use_occt=False).build(model, resolution=mesh_resolution)
+    def export_obj(
+        model: BoardModel,
+        path: Path,
+        mesh_resolution: int = 50,
+        include_board: bool = True,
+        include_fin_left: bool = True,
+        include_fin_right: bool = True,
+        include_fin_center: bool = True,
+    ) -> None:
+        mesh = _build_export_mesh(
+            model, mesh_resolution,
+            include_board, include_fin_left, include_fin_right, include_fin_center,
+        )
+        if mesh is None:
+            raise ValueError("No parts selected for export.")
         _write_obj(mesh.vertices, mesh.normals, mesh.triangles, Path(path))
+
+
+def _fin_side(fin) -> str:
+    """Classify fin by its lateral placement: 'left' | 'right' | 'center'."""
+    y = float(fin.placement.y_from_center_mm)
+    if y < -1.0:
+        return "left"
+    if y > 1.0:
+        return "right"
+    return "center"
+
+
+def _build_export_mesh(
+    model: BoardModel,
+    mesh_resolution: int,
+    include_board: bool,
+    include_fin_left: bool,
+    include_fin_right: bool,
+    include_fin_center: bool,
+):
+    from blankforge.geometry.board import BoardGeometryBuilder
+    from blankforge.geometry.fin import (
+        build_fin_mesh, merge_meshes, transform_fin_to_board,
+    )
+
+    parts = []
+    if include_board:
+        board_mesh, _ = BoardGeometryBuilder(use_occt=False).build(model, resolution=mesh_resolution)
+        parts.append(board_mesh)
+
+    if model.fins is not None:
+        side_flags = {
+            "left":   include_fin_left,
+            "right":  include_fin_right,
+            "center": include_fin_center,
+        }
+        for fin in model.fins.fins:
+            if not side_flags.get(_fin_side(fin), False):
+                continue
+            fm = build_fin_mesh(fin, n_height=30, n_chord=12)
+            if fm is None:
+                continue
+            parts.append(transform_fin_to_board(fm, fin, model))
+
+    return merge_meshes(*parts)
 
 
 def _write_stl_binary(vertices: np.ndarray, triangles: np.ndarray, path: Path) -> None:

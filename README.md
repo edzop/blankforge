@@ -64,7 +64,7 @@ python3 main.py
 > python3 -m pip install --break-system-packages PyOpenGL
 > ```
 >
-> Without PyOpenGL the app launches but the Rendered View and Quad View stay black.
+> Without PyOpenGL the app launches but the Rendered View stays black.
 
 Optional: install Blender separately to enable the Blender render path from the Rendered View sidebar.
 

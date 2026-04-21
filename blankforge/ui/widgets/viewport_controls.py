@@ -64,9 +64,10 @@ BOARD_PRESETS = [
 ]
 
 FIN_PRESETS = [
-    ("Iso",  45.0, 25.0),
-    ("Top",   0.0, 89.0),
-    ("Side",  0.0,  0.5),
+    ("Iso",   45.0, 25.0),
+    ("Top",    0.0, 89.0),
+    ("Side",   0.0,  0.5),
+    ("Front", 90.0,  0.5),
 ]
 
 
@@ -158,12 +159,14 @@ class ShadingControlsSidebar(QWidget):
         wireframe_builder: Callable[[], np.ndarray | None] | None = None,
         show_wireframe_detail: bool = False,
         initial_solid: int = 100,
+        thickness_axis: str = "z",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._viewport = viewport
         self._wireframe_builder = wireframe_builder
         self._show_detail = show_wireframe_detail
+        self._thickness_axis = thickness_axis
         self.setFixedWidth(220)
         # Dark background via palette — reliable across all Qt styles/themes
         _apply_dark_palette(self)
@@ -229,6 +232,8 @@ class ShadingControlsSidebar(QWidget):
             self._viewport.set_heatmap_blend(
                 self._hm_sl.value() / 100.0,
                 self.hm_sensitivity,
+                self.hm_mode,
+                self._thickness_axis,
             )
 
     # ------------------------------------------------------------------
@@ -323,6 +328,18 @@ class ShadingControlsSidebar(QWidget):
 
         # ── Heatmap ───────────────────────────────────────────────────
         vbox.addWidget(QLabel("<b>Heatmap</b>"))
+
+        from PySide6.QtWidgets import QComboBox
+        mode_row_w = QWidget()
+        mode_row = QHBoxLayout(mode_row_w)
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.addWidget(QLabel("Mode:"))
+        self._hm_mode = QComboBox()
+        self._hm_mode.addItems(["Curvature", "Thickness"])
+        mode_row.addWidget(self._hm_mode, stretch=1)
+        vbox.addWidget(mode_row_w)
+        self._hm_mode.currentIndexChanged.connect(self._on_hm_mode_changed)
+
         self._hm_sl, self._hm_sl_lbl, hm_row = \
             self._slider_row("Intensity:", 0, 100, 0, "{}%")
         self._hm_sl_lbl.setText("0%")
@@ -369,15 +386,31 @@ class ShadingControlsSidebar(QWidget):
         if self._wf_sl.value() > 0:
             self._rebuild_wireframe()
 
+    @property
+    def hm_mode(self) -> str:
+        return self._hm_mode.currentText().lower()
+
+    def _on_hm_mode_changed(self) -> None:
+        if self._hm_sl.value() > 0:
+            self._viewport.set_heatmap_blend(
+                self._hm_sl.value() / 100.0, self.hm_sensitivity,
+                self.hm_mode, self._thickness_axis,
+            )
+
     def _on_hm_intensity_changed(self, val: int) -> None:
         self._hm_sl_lbl.setText(f"{val}%")
-        self._viewport.set_heatmap_blend(val / 100.0, self.hm_sensitivity)
+        self._viewport.set_heatmap_blend(
+            val / 100.0, self.hm_sensitivity, self.hm_mode, self._thickness_axis
+        )
         self._hm_detail.setVisible(val > 0)
 
     def _on_hm_sensitivity_changed(self, val: int) -> None:
         self._hm_sensitivity_label.setText(f"{val / 100:.2f}")
         if self._hm_sl.value() > 0:
-            self._viewport.set_heatmap_blend(self._hm_sl.value() / 100.0, val / 100.0)
+            self._viewport.set_heatmap_blend(
+                self._hm_sl.value() / 100.0, val / 100.0,
+                self.hm_mode, self._thickness_axis,
+            )
 
     def _rebuild_wireframe(self) -> None:
         if self._wireframe_builder is None:

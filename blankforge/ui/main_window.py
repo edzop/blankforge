@@ -15,7 +15,6 @@ from blankforge.geometry.board import BoardGeometryBuilder, BoardMesh, BoardStat
 from blankforge.ui.tabs.tab_export import ExportTab
 from blankforge.ui.tabs.tab_parameters import ParametersTab
 from blankforge.ui.tabs.tab_profile_view import ProfileViewTab
-from blankforge.ui.tabs.tab_quad_view import QuadViewTab
 from blankforge.ui.tabs.tab_rendered_view import RenderedViewTab
 from blankforge.ui.tabs.tab_side_view import SideViewTab
 from blankforge.ui.tabs.tab_statistics import StatisticsTab
@@ -100,7 +99,6 @@ class BlankForgeWindow(QMainWindow):
         self._tab_side = SideViewTab(self.model, self.model_changed)
         self._tab_profile = ProfileViewTab(self.model, self.model_changed)
         self._tab_rendered = RenderedViewTab(self.model, self.model_changed)
-        self._tab_quad = QuadViewTab(self.model, self.model_changed)
         self._tab_stats = StatisticsTab(self.model, self.model_changed)
         self._tab_export = ExportTab(self.model, self.model_changed)
         self._tab_fins = FinsTab(self.model, self.model_changed)
@@ -111,7 +109,6 @@ class BlankForgeWindow(QMainWindow):
         self._tabs.addTab(self._tab_profile, "Rails")
         self._tabs.addTab(self._tab_fins, "Fins")
         self._tabs.addTab(self._tab_rendered, "Rendered View")
-        self._tabs.addTab(self._tab_quad, "Quad View")
         self._tabs.addTab(self._tab_stats, "Statistics")
         self._tabs.addTab(self._tab_export, "Export")
 
@@ -151,7 +148,6 @@ class BlankForgeWindow(QMainWindow):
         self._tab_top.refresh_from_model()
         self._tab_side.refresh_from_model()
         self._tab_profile.refresh_from_model()
-        self._tab_quad.refresh_from_model()
         self._tab_fins.refresh_from_model()
         self._trigger_geometry_build()
 
@@ -174,7 +170,6 @@ class BlankForgeWindow(QMainWindow):
 
     def _on_geometry_ready(self, mesh: BoardMesh, stats: BoardStats) -> None:
         self._tab_rendered.update_mesh(mesh)
-        self._tab_quad.update_mesh(mesh)
         self._tab_stats.update_stats(stats)
         self._status_label.setText(
             f"Volume: {stats.volume_cm3 / 1000:.1f} L  |  "

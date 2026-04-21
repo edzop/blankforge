@@ -170,6 +170,7 @@ class FinsTab(QWidget):
             wireframe_builder=self._build_wireframe_lines,
             show_wireframe_detail=False,
             initial_solid=100,
+            thickness_axis="y",
         )
         toggle = SidebarToggleStrip(self._shading)
         right_lay.addWidget(toggle)
@@ -450,6 +451,7 @@ class FinsTab(QWidget):
             return
         from blankforge.data.fin_model import FinBox
         fin.box = FinBox.from_preset(text)
+        self._rebuild_3d()
 
     def _on_foil_changed(self, val: float) -> None:
         fin = self._current_fin()

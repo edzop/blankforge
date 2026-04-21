@@ -92,6 +92,58 @@ class _GizmoOverlay(QWidget):
             p.drawText(int(ex) + 6, int(ey) + 5, lbl)
 
 
+def _compute_thickness_colors(
+    mesh: BoardMesh, sensitivity: float = 1.0, thickness_axis: str = "z"
+) -> np.ndarray:
+    """Per-vertex thickness mapped to blue=thick, red=thin.
+
+    thickness_axis: which axis measures thickness (span). The remaining two
+    axes form the spatial binning grid. Use 'z' for boards (binning X,Y) or
+    'y' for fins (binning X,Z — Y is foil depth).
+    """
+    verts = mesh.vertices
+    n = len(verts)
+
+    axis_idx = {"x": 0, "y": 1, "z": 2}[thickness_axis]
+    bin_axes = [i for i in (0, 1, 2) if i != axis_idx]
+    a = verts[:, bin_axes[0]]
+    b = verts[:, bin_axes[1]]
+    t_vals = verts[:, axis_idx]
+
+    nx, ny = 150, 80
+    alo, ahi = float(a.min()), float(a.max())
+    blo, bhi = float(b.min()), float(b.max())
+    a_range = ahi - alo if ahi > alo else 1.0
+    b_range = bhi - blo if bhi > blo else 1.0
+
+    ia = np.clip(((a - alo) / a_range * nx).astype(int), 0, nx - 1)
+    ib = np.clip(((b - blo) / b_range * ny).astype(int), 0, ny - 1)
+    flat = ia * ny + ib
+    n_cells = nx * ny
+
+    t_top = np.full(n_cells, -np.inf)
+    t_bot = np.full(n_cells,  np.inf)
+    np.maximum.at(t_top, flat, t_vals)
+    np.minimum.at(t_bot, flat, t_vals)
+
+    thickness_cells = np.where(
+        np.isfinite(t_top) & np.isfinite(t_bot),
+        np.maximum(t_top - t_bot, 0.0), 0.0,
+    )
+    thick = thickness_cells[flat]
+    t_lo, t_hi = float(thick.min()), float(thick.max())
+    if t_hi > t_lo:
+        t = (thick - t_lo) / (t_hi - t_lo)
+    else:
+        t = np.ones(n, dtype=np.float32)
+
+    thinness = np.clip((1.0 - t) / max(sensitivity, 0.01), 0.0, 1.0).astype(np.float32)
+    colors = np.zeros((n, 3), dtype=np.float32)
+    colors[:, 0] = thinness          # red when thin
+    colors[:, 2] = 1.0 - thinness   # blue when thick
+    return colors
+
+
 def _compute_curvature_colors(mesh: BoardMesh, sensitivity: float = 1.0) -> np.ndarray:
     """Per-vertex mean curvature mapped to blue→red. sensitivity in (0,1]: lower = amplifies subtle differences."""
     norms = mesh.normals
@@ -269,10 +321,18 @@ class GLViewport(QOpenGLWidget):
         self._pending_line_alpha = alpha
         self.update()
 
-    def set_heatmap_blend(self, blend: float, sensitivity: float = 1.0) -> None:
+    def set_heatmap_blend(
+        self, blend: float, sensitivity: float = 1.0,
+        mode: str = "curvature", thickness_axis: str = "z",
+    ) -> None:
         self._pending_heatmap_blend = blend
         if blend > 0.0 and self._mesh is not None:
-            self._pending_vertex_colors = _compute_curvature_colors(self._mesh, sensitivity)
+            if mode == "thickness":
+                self._pending_vertex_colors = _compute_thickness_colors(
+                    self._mesh, sensitivity, thickness_axis
+                )
+            else:
+                self._pending_vertex_colors = _compute_curvature_colors(self._mesh, sensitivity)
         self.update()
 
     def update_wireframe_lines(self, verts: np.ndarray | None) -> None:
